@@ -185,13 +185,20 @@ enum Commands {
             show: bool,
         },
         /// Demanglea nombres C++ (símbolos, o un nombre suelto)
-        Demangle {
-            file: PathBuf,
-            /// Mostrar solo vtables detectadas
-            #[arg(short, long)]
-            vtables: bool,
-        },
-    }
+            Demangle {
+                file: PathBuf,
+                /// Mostrar solo vtables detectadas
+                #[arg(short, long)]
+                vtables: bool,
+            },
+            /// Identifica funciones conocidas (firmas FLIRT-like)
+            Identify {
+                file: PathBuf,
+                /// Archivo JSON de firmas personalizadas (si no, builtin libc)
+                #[arg(short, long)]
+                signatures: Option<PathBuf>,
+            },
+        }
 
 fn main() {
     let cli = Cli::parse();
@@ -259,6 +266,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             show,
         } => cmd_annotate(&file, &funcs, &vars, &comments, show),
         Commands::Demangle { file, vtables } => cmd_demangle(&file, vtables),
+        Commands::Identify { file, signatures } => cmd_identify(&file, signatures.as_deref()),
     }
 }
 
@@ -1017,6 +1025,33 @@ fn cmd_demangle(
     }
     if demangled.len() > 200 {
         println!("  ... {} more", demangled.len() - 200);
+    }
+
+    Ok(())
+}
+
+fn cmd_identify(
+    file: &PathBuf,
+    signatures: Option<&std::path::Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use bitwise_core::analysis::signatures::{builtin_libc_db, SignatureDb};
+
+    let db = if let Some(path) = signatures {
+        let text = std::fs::read_to_string(path)?;
+        SignatureDb::load_json(&text)?
+    } else {
+        builtin_libc_db()
+    };
+
+    let raw = std::fs::read(file)?;
+    let hits = db.scan(&raw);
+
+    println!("{} {} firmas matched", "Identify:".green().bold(), hits.len());
+    for (offset, name) in hits.iter().take(100) {
+        println!("  {:#010x}  {}", offset, name.yellow());
+    }
+    if hits.len() > 100 {
+        println!("  ... {} more", hits.len() - 100);
     }
 
     Ok(())
