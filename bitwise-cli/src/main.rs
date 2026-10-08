@@ -169,22 +169,29 @@ enum Commands {
         stop_at: Vec<u64>,
     },
     /// Renombra funciones/variables y guarda en proyecto .bitwise.json
-    Annotate {
-        file: PathBuf,
-        /// Renombra función: --func 0x4da4 main
-        #[arg(long, value_names = ["ADDR", "NAME"], num_args = 2)]
-        funcs: Vec<String>,
-        /// Renombra variable/temp: --var t1000 filename
-        #[arg(long, value_names = ["TEMP", "NAME"], num_args = 2)]
-        vars: Vec<String>,
-        /// Comentario: --comment 0x4da4 "descifra el string"
-        #[arg(long, value_names = ["ADDR", "TEXT"], num_args = 2)]
-        comments: Vec<String>,
-        /// Mostrar el proyecto actual
-        #[arg(short, long)]
-        show: bool,
-    },
-}
+        Annotate {
+            file: PathBuf,
+            /// Renombra función: --funcs 0x4da4 main
+            #[arg(long, value_names = ["ADDR", "NAME"], num_args = 2)]
+            funcs: Vec<String>,
+            /// Renombra variable/temp: --vars t1000 filename
+            #[arg(long, value_names = ["TEMP", "NAME"], num_args = 2)]
+            vars: Vec<String>,
+            /// Comentario: --comments 0x4da4 "descifra el string"
+            #[arg(long, value_names = ["ADDR", "TEXT"], num_args = 2)]
+            comments: Vec<String>,
+            /// Mostrar el proyecto actual
+            #[arg(short, long)]
+            show: bool,
+        },
+        /// Demanglea nombres C++ (símbolos, o un nombre suelto)
+        Demangle {
+            file: PathBuf,
+            /// Mostrar solo vtables detectadas
+            #[arg(short, long)]
+            vtables: bool,
+        },
+    }
 
 fn main() {
     let cli = Cli::parse();
@@ -251,6 +258,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             comments,
             show,
         } => cmd_annotate(&file, &funcs, &vars, &comments, show),
+        Commands::Demangle { file, vtables } => cmd_demangle(&file, vtables),
     }
 }
 
@@ -971,6 +979,44 @@ fn cmd_annotate(
             "OK".green().bold(),
             file.display()
         );
+    }
+
+    Ok(())
+}
+
+fn cmd_demangle(
+    file: &PathBuf,
+    vtables_only: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+
+    if vtables_only {
+        let vtables = bitwise_core::analysis::cpp::detect_vtables(&info);
+        println!("{} {} vtables detected", "Vtables:".green().bold(), vtables.len());
+        for v in vtables.iter().take(100) {
+            println!(
+                "  {} @ {:#018x} ({} methods)",
+                v.section.yellow(),
+                v.address,
+                v.entry_count
+            );
+            for (i, e) in v.entries.iter().take(8).enumerate() {
+                println!("    [{:2}] {:#018x}", i, e);
+            }
+            if v.entry_count > 8 {
+                println!("    ... +{} more", v.entry_count - 8);
+            }
+        }
+        return Ok(());
+    }
+
+    let demangled = bitwise_core::analysis::cpp::demangled_function_names(&info);
+    println!("{} {} símbolos C++ demangleados", "C++:".green().bold(), demangled.len());
+    for (addr, name) in demangled.iter().take(200) {
+        println!("  {:#018x}  {}", addr, name);
+    }
+    if demangled.len() > 200 {
+        println!("  ... {} more", demangled.len() - 200);
     }
 
     Ok(())
