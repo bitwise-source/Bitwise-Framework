@@ -1,0 +1,698 @@
+//! # Bitwise CLI
+//!
+//! Herramienta de línea de comandos para análisis de binarios.
+//! Comandos: info, disasm, symbols, sections, analyze, ir, decompile,
+//! strings, xrefs, hexdump, tui, debug, script, diff.
+
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+use colored::*;
+
+use bitwise_core::analysis;
+use bitwise_core::binary;
+use bitwise_disasm::{format_instructions, Disassembler};
+
+/// Bitwise — Framework de ingeniería inversa multi-plataforma.
+#[derive(Parser)]
+#[command(name = "bitwise", version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Muestra información general del binario
+    Info {
+        file: PathBuf,
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Desensambla secciones ejecutables
+    Disasm {
+        file: PathBuf,
+        #[arg(short, long)]
+        section: Option<String>,
+        #[arg(short = 'b', long)]
+        show_bytes: bool,
+        #[arg(short = 'a', long, default_value = "0")]
+        base_address: u64,
+        #[arg(short = 'n', long)]
+        max_instructions: Option<usize>,
+    },
+    /// Lista símbolos (funciones, variables)
+    Symbols {
+        file: PathBuf,
+        #[arg(short, long, default_value = "all")]
+        filter: String,
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Lista secciones del binario
+    Sections {
+        file: PathBuf,
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Análisis completo: detección de funciones y CFG
+    Analyze {
+        file: PathBuf,
+        #[arg(short, long)]
+        blocks: bool,
+    },
+    /// Muestra el IR (P-Code) de una sección
+    Ir {
+        file: PathBuf,
+        #[arg(short, long)]
+        section: Option<String>,
+        #[arg(short = 'n', long)]
+        max_instructions: Option<usize>,
+    },
+    /// Decompila funciones a pseudo-C
+    Decompile {
+        file: PathBuf,
+        /// Dirección de la función (hex, ej 0x4da4)
+        #[arg(short = 'f', long)]
+        function: Option<String>,
+        /// Decompilar las primeras N funciones (default 5)
+        #[arg(short = 'n', long)]
+        max_functions: Option<usize>,
+    },
+    /// Extrae strings del binario
+    Strings {
+        file: PathBuf,
+        #[arg(short = 'n', long, default_value = "4")]
+        min_length: usize,
+        #[arg(short, long)]
+        grep: Option<String>,
+    },
+    /// Referencias cruzadas hacia una dirección
+    Xrefs {
+        file: PathBuf,
+        /// Dirección objetivo (hex)
+        address: String,
+    },
+    /// Hex dump del archivo o una sección
+    Hexdump {
+        file: PathBuf,
+        #[arg(short = 'n', long, default_value = "32")]
+        lines: usize,
+        #[arg(short, long)]
+        section: Option<String>,
+    },
+    /// Interfaz interactiva de terminal
+    Tui {
+        file: PathBuf,
+    },
+    /// Debugger: corre el binario con breakpoints
+    Debug {
+        file: PathBuf,
+        /// Breakpoint inicial (dirección hex)
+        #[arg(short = 'b', long)]
+        breakpoint: Option<String>,
+        /// Argumentos para el programa
+        args: Vec<String>,
+    },
+    /// Ejecuta un script .bws
+    Script {
+        script_file: PathBuf,
+    },
+    /// Compara dos binarios (secciones + símbolos)
+    Diff {
+        file_a: PathBuf,
+        file_b: PathBuf,
+    },
+}
+
+fn main() {
+    let cli = Cli::parse();
+
+    if let Err(e) = run(cli) {
+        eprintln!("{} {}", "error:".red().bold(), e);
+        std::process::exit(1);
+    }
+}
+
+fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    match cli.command {
+        Commands::Info { file, json } => cmd_info(&file, json),
+        Commands::Disasm {
+            file,
+            section,
+            show_bytes,
+            base_address,
+            max_instructions,
+        } => cmd_disasm(
+            &file,
+            section.as_deref(),
+            show_bytes,
+            base_address,
+            max_instructions,
+        ),
+        Commands::Symbols { file, filter, json } => cmd_symbols(&file, &filter, json),
+        Commands::Sections { file, json } => cmd_sections(&file, json),
+        Commands::Analyze { file, blocks } => cmd_analyze(&file, blocks),
+        Commands::Ir { file, section, max_instructions } => {
+            cmd_ir(&file, section.as_deref(), max_instructions)
+        }
+        Commands::Decompile { file, function, max_functions } => {
+            cmd_decompile(&file, function.as_deref(), max_functions)
+        }
+        Commands::Strings { file, min_length, grep } => {
+            cmd_strings(&file, min_length, grep.as_deref())
+        }
+        Commands::Xrefs { file, address } => cmd_xrefs(&file, &address),
+        Commands::Hexdump { file, lines, section } => cmd_hexdump(&file, lines, section.as_deref()),
+        Commands::Tui { file } => cmd_tui(&file),
+        Commands::Debug { file, breakpoint, args } => cmd_debug(&file, breakpoint.as_deref(), &args),
+        Commands::Script { script_file } => cmd_script(&script_file),
+        Commands::Diff { file_a, file_b } => cmd_diff(&file_a, &file_b),
+    }
+}
+
+fn cmd_info(file: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&info)?);
+    } else {
+        println!("{}", "═══ Bitwise Binary Info ═══".cyan().bold());
+        println!("  {} {}", "File:".bold(), info.path);
+        println!("  {} {}", "Format:".bold(), format!("{:?}", info.format).yellow());
+        println!("  {} {}", "Arch:".bold(), format!("{:?}", info.architecture).green());
+        println!("  {} {}", "Endianness:".bold(), format!("{:?}", info.endianness));
+        println!("  {} {:?}", "Platform:".bold(), info.platform);
+        println!("  {} {}", "Size:".bold(), format_size(info.file_size));
+        if let Some(ep) = info.entry_point {
+            println!("  {} {:#018x}", "Entry Point:".bold(), ep);
+        }
+        println!("  {} {}", "Sections:".bold(), info.sections.len());
+        println!("  {} {}", "Symbols:".bold(), info.symbols.len());
+    }
+
+    Ok(())
+}
+
+fn cmd_disasm(
+    file: &PathBuf,
+    section: Option<&str>,
+    show_bytes: bool,
+    base_address: u64,
+    max_instructions: Option<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+    let disasm = Disassembler::from_binary(&info)?;
+
+    let instructions = if let Some(sec_name) = section {
+        disasm.disassemble_section(&info, sec_name)?
+    } else {
+        disasm.disassemble_binary(&info)?
+    };
+
+    let instructions: Vec<_> = if let Some(max) = max_instructions {
+        instructions.into_iter().take(max).collect()
+    } else {
+        instructions
+    };
+
+    let _ = base_address;
+
+    println!(
+        "{} {} instructions",
+        "Disassembled".green().bold(),
+        instructions.len()
+    );
+    println!();
+
+    if show_bytes {
+        println!(
+            "  {:18}  {:24}  {:8}  {}",
+            "Address", "Bytes", "Mnemonic", "Operands"
+        );
+    } else {
+        println!("  {:18}  {:8}  {}", "Address", "Mnemonic", "Operands");
+    }
+
+    print!("{}", format_instructions(&instructions, show_bytes));
+
+    Ok(())
+}
+
+fn cmd_symbols(file: &PathBuf, filter: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+
+    let filtered: Vec<_> = info
+        .symbols
+        .iter()
+        .filter(|s| match filter {
+            "func" => matches!(s.kind, bitwise_core::SymbolKind::Function),
+            "obj" => matches!(s.kind, bitwise_core::SymbolKind::Object),
+            _ => true,
+        })
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&filtered)?);
+    } else {
+        println!(
+            "{} {} symbols ({})",
+            "Symbols:".green().bold(),
+            filtered.len(),
+            filter
+        );
+        for sym in filtered.iter().take(100) {
+            let kind_str = match sym.kind {
+                bitwise_core::SymbolKind::Function => "FUNC".cyan(),
+                bitwise_core::SymbolKind::Object => "OBJ".yellow(),
+                _ => "?".into(),
+            };
+            println!("  {:#018x}  {:6}  {:8}  {}", sym.address, sym.size, kind_str, sym.name);
+        }
+        if filtered.len() > 100 {
+            println!("  ... {} more", filtered.len() - 100);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_sections(file: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&info.sections)?);
+    } else {
+        println!(
+            "{} {} sections",
+            "Sections:".green().bold(),
+            info.sections.len()
+        );
+        for sec in &info.sections {
+            let perms = format!(
+                "{}{}{}",
+                if sec.permissions.read { "r" } else { "-" },
+                if sec.permissions.write { "w" } else { "-" },
+                if sec.permissions.execute { "x" } else { "-" }
+            );
+            println!(
+                "  {:24}  {:#018x}  {:10}  {}",
+                sec.name, sec.virtual_address, sec.virtual_size, perms
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_analyze(file: &PathBuf, show_blocks: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+    let disasm = Disassembler::from_binary(&info)?;
+    let instructions = disasm.disassemble_binary(&info)?;
+
+    if instructions.is_empty() {
+        println!("{}", "No executable code found.".yellow());
+        return Ok(());
+    }
+
+    let functions = analysis::detect_functions(&instructions, &info.symbols);
+    println!("{} {} functions detected", "Analysis:".green().bold(), functions.len());
+
+    for func_addr in functions.iter().take(50) {
+        println!("  {} {:#018x}", "func".cyan(), func_addr);
+    }
+    if functions.len() > 50 {
+        println!("  ... {} more", functions.len() - 50);
+    }
+
+    if show_blocks {
+        let blocks = analysis::build_basic_blocks(&instructions, &functions);
+        println!("\n{} {} basic blocks", "Basic Blocks:".yellow().bold(), blocks.len());
+        for block in blocks.iter().take(30) {
+            let succ: Vec<String> = block.successors.iter().map(|a| format!("{:#x}", a)).collect();
+            println!(
+                "  {:#018x} → {} ({} bytes)",
+                block.start_address,
+                if succ.is_empty() { "∅".to_string() } else { succ.join(", ") },
+                block.end_address - block.start_address
+            );
+        }
+        if blocks.len() > 30 {
+            println!("  ... {} more", blocks.len() - 30);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_ir(
+    file: &PathBuf,
+    section: Option<&str>,
+    max_instructions: Option<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use bitwise_ir::PcodeInst;
+
+    let info = binary::load_binary(file)?;
+    let disasm = Disassembler::from_binary(&info)?;
+
+    let instructions = if let Some(sec) = section {
+        disasm.disassemble_section(&info, sec)?
+    } else {
+        disasm.disassemble_binary(&info)?
+    };
+
+    let instructions: Vec<_> = if let Some(max) = max_instructions {
+        instructions.into_iter().take(max).collect()
+    } else {
+        instructions
+    };
+
+    let mut lifter = bitwise_lift::Lifter::new(bitwise_lift::RegisterMap::x86_64());
+    let pcode: Vec<PcodeInst> = lifter.lift_all(&instructions);
+
+    println!("{} {} pcode ops", "IR:".green().bold(), pcode.len());
+    println!();
+    for inst in &pcode {
+        println!("{}", inst);
+    }
+
+    Ok(())
+}
+
+fn cmd_decompile(
+    file: &PathBuf,
+    function: Option<&str>,
+    max_functions: Option<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+    let disasm = Disassembler::from_binary(&info)?;
+    let instructions = disasm.disassemble_binary(&info)?;
+
+    if instructions.is_empty() {
+        println!("{}", "No executable code found.".yellow());
+        return Ok(());
+    }
+
+    let functions = analysis::detect_functions(&instructions, &info.symbols);
+
+    let targets: Vec<u64> = if let Some(f) = function {
+        let addr = u64::from_str_radix(f.trim_start_matches("0x"), 16)?;
+        vec![addr]
+    } else {
+        let n = max_functions.unwrap_or(5).min(functions.len());
+        functions[..n].to_vec()
+    };
+
+    // slicing de funciones por rango de direcciones
+    let mut sorted = instructions.clone();
+    sorted.sort_by_key(|i| i.address);
+
+    let mut decompiler = bitwise_decomp::Decompiler::new();
+
+    for target in targets {
+        let next_start = functions
+            .iter()
+            .filter(|&&a| a > target)
+            .min()
+            .copied()
+            .unwrap_or(u64::MAX);
+
+        let func_insns: Vec<_> = sorted
+            .iter()
+            .filter(|i| i.address >= target && i.address < next_start)
+            .cloned()
+            .collect();
+
+        if func_insns.is_empty() {
+            println!("{}", format!("// sin instrucciones en 0x{:x}", target).yellow());
+            continue;
+        }
+
+        let mut lifter = bitwise_lift::Lifter::new(bitwise_lift::RegisterMap::x86_64());
+        let pcode = lifter.lift_all(&func_insns);
+        let blocks = bitwise_lift::Lifter::build_blocks(&pcode);
+
+        let mut ir_func = bitwise_ir::IrFunction::new(&format!("func_{:x}", target), target);
+        ir_func.blocks = blocks;
+
+        let code = decompiler.decompile(&ir_func);
+        println!("{}", code);
+        println!();
+    }
+
+    Ok(())
+}
+
+fn cmd_strings(
+    file: &PathBuf,
+    min_length: usize,
+    grep: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+    let strings = analysis::refs::extract_strings_from_binary(&info, min_length)?;
+
+    let filtered: Vec<_> = if let Some(g) = grep {
+        strings.into_iter().filter(|s| s.value.contains(g)).collect()
+    } else {
+        strings
+    };
+
+    println!(
+        "{} {} strings (min_len={})",
+        "Strings:".green().bold(),
+        filtered.len(),
+        min_length
+    );
+    for s in filtered.iter().take(200) {
+        println!("  {:#018x}  [{}]  {}", s.address, s.section, s.value);
+    }
+    if filtered.len() > 200 {
+        println!("  ... {} more", filtered.len() - 200);
+    }
+
+    Ok(())
+}
+
+fn cmd_xrefs(file: &PathBuf, address: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let target = u64::from_str_radix(address.trim_start_matches("0x"), 16)?;
+
+    let info = binary::load_binary(file)?;
+    let disasm = Disassembler::from_binary(&info)?;
+    let instructions = disasm.disassemble_binary(&info)?;
+
+    let table = analysis::refs::build_xrefs(&instructions);
+    let refs = analysis::refs::xrefs_to(&table, target);
+
+    println!("{} {} xrefs to {:#018x}", "Xrefs:".green().bold(), refs.len(), target);
+    for x in refs.iter().take(100) {
+        let kind = match x.kind {
+            analysis::refs::XrefKind::Call => "CALL".cyan(),
+            analysis::refs::XrefKind::Jump => "JUMP".yellow(),
+            analysis::refs::XrefKind::Data => "DATA".white(),
+        };
+        println!("  {:#018x}  {} → {:#018x}", x.from_address, kind, x.to_address);
+    }
+    if refs.is_empty() {
+        println!("{}", "  (no references found)".yellow());
+    }
+
+    Ok(())
+}
+
+fn cmd_hexdump(
+    file: &PathBuf,
+    lines: usize,
+    section: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+    let raw = std::fs::read(file)?;
+
+    let (data, base) = if let Some(sec_name) = section {
+        let sec = info
+            .sections
+            .iter()
+            .find(|s| s.name.contains(sec_name))
+            .ok_or_else(|| format!("sección no encontrada: {}", sec_name))?;
+        let start = sec.raw_offset as usize;
+        let end = (start + sec.raw_size as usize).min(raw.len());
+        (&raw[start.min(raw.len())..end], sec.virtual_address)
+    } else {
+        (&raw[..], 0u64)
+    };
+
+    print!("{}", bitwise_tui::hexdump::hexdump_limited(data, base, lines));
+
+    Ok(())
+}
+
+fn cmd_tui(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let mut session = bitwise_tui::TuiSession::load(file)?;
+    bitwise_tui::run(&mut session)?;
+    Ok(())
+}
+
+fn cmd_debug(
+    file: &PathBuf,
+    breakpoint: Option<&str>,
+    args: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut dbg = bitwise_debug::Debugger::new();
+
+    println!("{} {}", "Spawning:".cyan().bold(), file.display());
+    let pid = dbg.spawn(file.to_str().unwrap(), args)?;
+    println!("  pid={}", pid);
+
+    // Para PIE: obtener la base de carga real desde /proc/<pid>/maps
+    let load_base = std::fs::read_to_string(format!("/proc/{}/maps", pid))
+        .ok()
+        .and_then(|maps| {
+            maps.lines()
+                .next()
+                .and_then(|first| first.split('-').next().map(|h| u64::from_str_radix(h, 16).unwrap_or(0)))
+        })
+        .unwrap_or(0);
+    if load_base > 0 {
+        println!("  load base = {:#018x} (PIE)", load_base);
+    }
+
+    let info = binary::load_binary(file)?;
+    let disasm = Disassembler::from_binary(&info)?;
+
+    let bp_addr = if let Some(bp) = breakpoint {
+        u64::from_str_radix(bp.trim_start_matches("0x"), 16)? + load_base
+    } else {
+        info.entry_point.unwrap_or(0) + load_base
+    };
+
+    if bp_addr > 0 {
+        println!("{} breakpoint at {:#018x}", "Set:".cyan().bold(), bp_addr);
+        dbg.set_breakpoint(bp_addr)?;
+    }
+
+    println!("{} running...", "→".cyan());
+    let event = dbg.cont()?;
+
+    match event {
+        bitwise_debug::StopEvent::Trap => {
+            println!("{}", "Stopped (SIGTRAP)".green().bold());
+            if let Some(hit) = dbg.breakpoints().first() {
+                println!("  breakpoint hit at {:#018x}", hit.address);
+            }
+            let regs = dbg.registers()?;
+            println!(
+                "  rip={:#018x} rsp={:#018x} rbp={:#018x}",
+                regs.get("rip").copied().unwrap_or(0),
+                regs.get("rsp").copied().unwrap_or(0),
+                regs.get("rbp").copied().unwrap_or(0),
+            );
+            match dbg.disasm_at_rip(&disasm, 8) {
+                Ok(insns) => {
+                    println!("{}", "  code at rip:".bold());
+                    print!("{}", format_instructions(&insns, true));
+                }
+                Err(e) => println!("  (disasm failed: {})", e),
+            }
+        }
+        bitwise_debug::StopEvent::Exited(code) => {
+            println!("{} exit code {}", "Process exited:".yellow().bold(), code);
+        }
+        other => println!("{} {:?}", "Event:".yellow(), other),
+    }
+
+    dbg.kill()?;
+    println!("{}", "Process killed.".dimmed());
+
+    Ok(())
+}
+
+fn cmd_script(script_file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::fs::read_to_string(script_file)?;
+    let mut interp = bitwise_script::Interpreter::new();
+    let result = interp.run(&source)?;
+    println!("{}", result);
+    Ok(())
+}
+
+fn cmd_diff(file_a: &PathBuf, file_b: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let info_a = binary::load_binary(file_a)?;
+    let info_b = binary::load_binary(file_b)?;
+
+    println!("{}", "═══ Bitwise Diff ═══".cyan().bold());
+    println!("  A: {}", info_a.path);
+    println!("  B: {}", info_b.path);
+    println!();
+
+    if info_a.architecture != info_b.architecture {
+        println!(
+            "  {} {:?} → {:?}",
+            "arch changed:".yellow(),
+            info_a.architecture,
+            info_b.architecture
+        );
+    }
+    if info_a.entry_point != info_b.entry_point {
+        println!(
+            "  {} {:#x} → {:#x}",
+            "entry changed:".yellow(),
+            info_a.entry_point.unwrap_or(0),
+            info_b.entry_point.unwrap_or(0)
+        );
+    }
+
+    use std::collections::BTreeSet;
+    let secs_a: BTreeSet<String> = info_a.sections.iter().map(|s| s.name.clone()).collect();
+    let secs_b: BTreeSet<String> = info_b.sections.iter().map(|s| s.name.clone()).collect();
+
+    let added: Vec<_> = secs_b.difference(&secs_a).collect();
+    let removed: Vec<_> = secs_a.difference(&secs_b).collect();
+
+    if !added.is_empty() {
+        println!("  {} +{}", "sections added:".green(), added.len());
+        for s in added.iter().take(10) {
+            println!("    + {}", s);
+        }
+    }
+    if !removed.is_empty() {
+        println!("  {} -{}", "sections removed:".red(), removed.len());
+        for s in removed.iter().take(10) {
+            println!("    - {}", s);
+        }
+    }
+
+    let syms_a: BTreeSet<String> = info_a.symbols.iter().map(|s| s.name.clone()).collect();
+    let syms_b: BTreeSet<String> = info_b.symbols.iter().map(|s| s.name.clone()).collect();
+
+    let sym_added = syms_b.difference(&syms_a).count();
+    let sym_removed = syms_a.difference(&syms_b).count();
+
+    println!(
+        "  {} {} total, +{}/-{}",
+        "symbols:".bold(),
+        syms_b.len(),
+        sym_added,
+        sym_removed
+    );
+
+    let mut moved = 0;
+    for sa in &info_a.symbols {
+        if let Some(sb) = info_b.symbols.iter().find(|s| s.name == sa.name) {
+            if sa.address != sb.address {
+                moved += 1;
+            }
+        }
+    }
+    println!("  {} {} símbolos compartidos cambiaron de dirección", "moved:".bold(), moved);
+
+    Ok(())
+}
+
+fn format_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+    format!("{:.1} {}", size, UNITS[unit_idx])
+}

@@ -1,0 +1,10 @@
+[package]
+name = "bitwise-disasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bitwise-core = { path = "../bitwise-core" }
+capstone = "0.12"
+thiserror.workspace = true

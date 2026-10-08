@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "bitwise-core",
+    "bitwise-disasm",
+    "bitwise-cli",
+    "bitwise-ir",
+    "bitwise-lift",
+    "bitwise-decomp",
+    "bitwise-tui",
+    "bitwise-debug",
+    "bitwise-script",
+    "bitwise-mcp",
+]
+
+[workspace.package]
+version = "0.1.2"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/bitwise-source/Bitwise-Framework"
+authors = ["Bitwise contributors"]
+
+[workspace.dependencies]
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"

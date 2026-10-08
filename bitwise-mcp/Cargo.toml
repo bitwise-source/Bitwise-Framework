@@ -1,0 +1,18 @@
+[package]
+name = "bitwise-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "bitwise-mcp"
+path = "src/main.rs"
+
+[dependencies]
+bitwise-core = { path = "../bitwise-core" }
+bitwise-disasm = { path = "../bitwise-disasm" }
+bitwise-ir = { path = "../bitwise-ir" }
+bitwise-lift = { path = "../bitwise-lift" }
+bitwise-decomp = { path = "../bitwise-decomp" }
+serde_json.workspace = true
+serde.workspace = true

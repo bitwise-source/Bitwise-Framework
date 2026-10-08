@@ -1,0 +1,11 @@
+[package]
+name = "bitwise-lift"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bitwise-core = { path = "../bitwise-core" }
+bitwise-ir = { path = "../bitwise-ir" }
+capstone = "0.12"
+thiserror.workspace = true

@@ -1,0 +1,290 @@
+//! # Bitwise TUI — Terminal User Interface
+//!
+//! Interfaz interactiva de terminal para explorar binarios: vistas de
+//! desensamblado, hex dump, símbolos y secciones con navegación por teclado.
+//!
+//! Teclas: ↑/↓ navegar · 1-4 cambiar vista · / buscar · q salir
+
+use bitwise_core::binary;
+use bitwise_core::{BinaryInfo, Section, Symbol};
+use bitwise_disasm::{format_instructions, Disassembler};
+use std::io::{self, Write};
+
+pub mod view;
+pub mod hexdump;
+
+pub use view::ViewMode;
+
+/// Estado global de la sesión TUI.
+pub struct TuiSession {
+    pub info: BinaryInfo,
+    pub disasm: Option<Disassembler>,
+    pub instructions: Vec<bitwise_core::arch::Instruction>,
+    /// Índice de línea seleccionada en la vista activa
+    pub cursor: usize,
+    /// Scroll offset del render
+    pub scroll: usize,
+    pub mode: ViewMode,
+    pub query: String,
+    pub running: bool,
+    /// Texto de estado (mensajes al usuario)
+    pub status: String,
+}
+
+impl TuiSession {
+    /// Carga el binario y desensambla las secciones ejecutables.
+    pub fn load(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let info = binary::load_binary(path)?;
+
+        let (disasm, instructions) = match Disassembler::from_binary(&info) {
+            Ok(d) => {
+                let insns = d.disassemble_binary(&info).unwrap_or_default();
+                (Some(d), insns)
+            }
+            Err(_) => (None, Vec::new()),
+        };
+
+        Ok(Self {
+            info,
+            disasm,
+            instructions,
+            cursor: 0,
+            scroll: 0,
+            mode: ViewMode::Disasm,
+            query: String::new(),
+            running: false,
+            status: String::new(),
+        })
+    }
+
+    /// Número de líneas de la vista activa.
+    pub fn line_count(&self) -> usize {
+        match self.mode {
+            ViewMode::Disasm => self.instructions.len(),
+            ViewMode::Symbols => self.info.symbols.len(),
+            ViewMode::Sections => self.info.sections.len(),
+            ViewMode::Help => 1,
+        }
+    }
+
+    /// Avanza el cursor ajustando el scroll.
+    pub fn move_down(&mut self, term_height: usize) {
+        let max = self.line_count().saturating_sub(1);
+        if self.cursor < max {
+            self.cursor += 1;
+        }
+        let visible = term_height.saturating_sub(4); // header + status + bordes
+        if self.cursor >= self.scroll + visible {
+            self.scroll = self.cursor + 1 - visible;
+        }
+    }
+
+    pub fn move_up(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        }
+    }
+
+    /// Filtra símbolos según la query activa (por nombre, case-insensitive).
+    pub fn filtered_symbols(&self) -> Vec<&Symbol> {
+        if self.query.is_empty() {
+            return self.info.symbols.iter().collect();
+        }
+        let q = self.query.to_lowercase();
+        self.info
+            .symbols
+            .iter()
+            .filter(|s| s.name.to_lowercase().contains(&q))
+            .collect()
+    }
+
+    /// Genera el contenido textual de la vista activa.
+    pub fn render_lines(&self, height: usize) -> Vec<String> {
+        match self.mode {
+            ViewMode::Disasm => {
+                let end = (self.scroll + height).min(self.instructions.len());
+                let slice = &self.instructions[self.scroll.min(self.instructions.len())..end];
+                let text = format_instructions(slice, true);
+                text.lines().map(|l| l.to_string()).collect()
+            }
+            ViewMode::Symbols => {
+                let syms = self.filtered_symbols();
+                let end = (self.scroll + height).min(syms.len());
+                syms[self.scroll.min(syms.len())..end]
+                    .iter()
+                    .map(|s| format!("  {:#018x}  {:6}  {:8}  {}", s.address, s.size, kind_str(s), s.name))
+                    .collect()
+            }
+            ViewMode::Sections => self.info.sections[self.scroll.min(self.info.sections.len())..]
+                .iter()
+                .take(height)
+                .map(section_line)
+                .collect(),
+            ViewMode::Help => crate::view::HELP_TEXT.lines().map(|l| l.to_string()).collect(),
+        }
+    }
+}
+
+fn kind_str(s: &Symbol) -> &'static str {
+    use bitwise_core::SymbolKind::*;
+    match s.kind {
+        Function => "FUNC",
+        Object => "OBJ",
+        Section => "SECT",
+        File => "FILE",
+        Unknown => "?",
+    }
+}
+
+fn section_line(sec: &Section) -> String {
+    let perms = format!(
+        "{}{}{}",
+        if sec.permissions.read { "r" } else { "-" },
+        if sec.permissions.write { "w" } else { "-" },
+        if sec.permissions.execute { "x" } else { "-" }
+    );
+    format!(
+        "  {:24}  {:#018x}  {:10}  {}",
+        sec.name, sec.virtual_address, sec.virtual_size, perms
+    )
+}
+
+/// Render simple sin dependencias de pantalla completa: imprime y lee teclas.
+/// Útil como fallback y para tests.
+pub fn render_snapshot(session: &TuiSession, height: usize) -> String {
+    let mut out = String::new();
+    let title = format!(
+        "bitwise — {} — {:?}/{:?}",
+        session.info.path,
+        session.info.format,
+        session.info.architecture
+    );
+    out.push_str(&format!("{}\r\n{}\r\n", title, "─".repeat(title.len().min(80))));
+    for line in session.render_lines(height) {
+        out.push_str(&line);
+        out.push_str("\r\n");
+    }
+    out
+}
+
+/// Loop principal (raw mode vía crossterm).
+pub fn run(session: &mut TuiSession) -> io::Result<()> {
+    use crossterm::event::{Event, KeyCode, KeyEvent};
+    use crossterm::{execute, terminal};
+
+    let mut stdout = io::stdout();
+    terminal::enable_raw_mode()?;
+    execute!(stdout, terminal::EnterAlternateScreen)?;
+    session.running = true;
+
+    let (_, term_h) = terminal::size()?;
+    let mut term_h = term_h as usize;
+
+    while session.running {
+        let (_, h) = terminal::size().unwrap_or((80, 24));
+        term_h = h as usize;
+        redraw(session, term_h, &mut stdout)?;
+
+        if let Event::Key(key) = crossterm::event::read()? {
+            if key.kind == crossterm::event::KeyEventKind::Press {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => session.running = false,
+                    KeyCode::Down | KeyCode::Char('j') => session.move_down(term_h),
+                    KeyCode::Up | KeyCode::Char('k') => session.move_up(),
+                    KeyCode::Char('1') => { session.mode = ViewMode::Disasm; session.cursor = 0; session.scroll = 0; }
+                    KeyCode::Char('2') => { session.mode = ViewMode::Symbols; session.cursor = 0; session.scroll = 0; }
+                    KeyCode::Char('3') => { session.mode = ViewMode::Sections; session.cursor = 0; session.scroll = 0; }
+                    KeyCode::Char('4') => { session.mode = ViewMode::Help; }
+                    KeyCode::Char('/') => {
+                        // búsqueda simple: leer línea desde stdin crudo es complejo;
+                        // usamos status para indicar el modo y capturamos caracteres
+                        session.status = "buscar: (escribe y Enter, Esc cancela)".into();
+                        let q = read_line_raw(&mut stdout)?;
+                        session.query = q;
+                        session.status.clear();
+                        session.cursor = 0;
+                        session.scroll = 0;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    execute!(stdout, terminal::LeaveAlternateScreen)?;
+    terminal::disable_raw_mode()?;
+    Ok(())
+}
+
+fn redraw(session: &TuiSession, height: usize, stdout: &mut io::Stdout) -> io::Result<()> {
+    use crossterm::cursor::MoveTo;
+    use crossterm::style::Print;
+    use crossterm::queue;
+
+    queue!(stdout, MoveTo(0, 0))?;
+
+    let title = format!(
+        " bitwise │ {} │ {:?} {:?} │ [1]disasm [2]sym [3]sect [4]help [/]search [q]uit ",
+        session.info.path,
+        session.info.format,
+        session.info.architecture
+    );
+    queue!(stdout, Print(title))?;
+    queue!(stdout, MoveTo(0, 1))?;
+    queue!(stdout, Print("─".repeat(100)))?;
+
+    let body_h = height.saturating_sub(3);
+    for (i, line) in session.render_lines(body_h).into_iter().enumerate() {
+        queue!(stdout, MoveTo(0, (i + 2) as u16))?;
+        let marker = if i + session.scroll == session.cursor { ">" } else { " " };
+        let truncated: String = line.chars().take(120).collect();
+        queue!(stdout, Print(format!("{}{}", marker, truncated)))?;
+    }
+
+    let status = if session.status.is_empty() {
+        format!(
+            " [{} lines] cursor={} scroll={} query='{}'",
+            session.line_count(),
+            session.cursor,
+            session.scroll,
+            session.query
+        )
+    } else {
+        format!(" {}", session.status)
+    };
+    queue!(stdout, MoveTo(0, (height.saturating_sub(1)) as u16))?;
+    queue!(stdout, Print(status))?;
+
+    stdout.flush()
+}
+
+/// Lee una línea caracter a caracter en raw mode (para la búsqueda '/').
+fn read_line_raw(stdout: &mut io::Stdout) -> io::Result<String> {
+    use crossterm::event::{Event, KeyCode};
+    let mut buf = String::new();
+    loop {
+        if let Event::Key(key) = crossterm::event::read()? {
+            match key.code {
+                KeyCode::Enter => break,
+                KeyCode::Esc => {
+                    buf.clear();
+                    break;
+                }
+                KeyCode::Backspace => {
+                    buf.pop();
+                }
+                KeyCode::Char(c) => buf.push(c),
+                _ => {}
+            }
+            use crossterm::cursor::MoveTo;
+            use crossterm::style::Print;
+            use crossterm::queue;
+            queue!(stdout, MoveTo(0, 23), Print(format!("buscar: {}  ", buf)))?;
+            stdout.flush()?;
+        }
+    }
+    Ok(buf)
+}

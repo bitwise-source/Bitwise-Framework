@@ -1,0 +1,11 @@
+[package]
+name = "bitwise-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bitwise-core = { path = "../bitwise-core" }
+bitwise-disasm = { path = "../bitwise-disasm" }
+crossterm = "0.28"
+thiserror.workspace = true
