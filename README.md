@@ -171,7 +171,7 @@ bitwise/
 - [x] Lifter AArch64 (stp/ldp/adrp/cbz/b.cond)
 - [x] Desensamblado RISC-V / MIPS / PowerPC
 - [x] Debugger backends skeleton: Windows (Debug API) y macOS (Mach exceptions)
-- [x] Base de datos de firmas de funciones (estilo Ghidra)
+- [x] Base de datos de firmas de funciones 
 
 ## 🤝 Contribuir
 
