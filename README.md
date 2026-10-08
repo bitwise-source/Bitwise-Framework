@@ -16,7 +16,7 @@ decompila a pseudo-C, debuggea con breakpoints, y automatiza con scripting.
 
 [Instalación](#-instalación) · [Uso](#-uso-rápido) · [Arquitectura](#️-arquitectura) · [Roadmap](#️-roadmap)
 
-
+*Creado por **k2sy***
 
 </div>
 
@@ -190,6 +190,16 @@ MIT — ver [LICENSE](LICENSE)
 
 <div align="center">
 
-**Bitwise** · framework de ingeniería inversa multi-plataforma y open source
+**Bitwise** · hecho con cariño por [**k2sy**](https://discord.gg/TxB4drcSvG)
+
+<br/>
+
+<a href="https://discord.gg/TxB4drcSvG" target="_blank">
+  <img src="https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/discord.svg" alt="Discord" width="42" height="42"/>
+</a>
+
+<br/>
+
+[💬 Únete a nuestro Discord](https://discord.gg/TxB4drcSvG)
 
 </div>

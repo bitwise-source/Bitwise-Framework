@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 #  Bitwise — build automático
-#  Framework de ingeniería inversa multi-plataforma y open source
+#  Creado por k2sy
 #
 #  Instala automáticamente todos los requisitos (rustup, toolchain Rust)
 #  y compila el proyecto en modo release.
@@ -26,7 +26,7 @@ fail() { echo -e "${RED}[error]${RESET} $*"; exit 1; }
 echo -e "${BOLD}"
 echo "  ╔══════════════════════════════════════════╗"
 echo "  ║   Bitwise — Reverse Engineering Framework ║"
-echo "  ║                                          ║"
+echo "  ║   creado por k2sy                        ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo -e "${RESET}"
 
@@ -102,7 +102,7 @@ if [ -x "$BIN" ]; then
     echo "  $BIN info /bin/ls     # analiza un binario"
     echo "  $BIN tui /bin/ls      # interfaz interactiva"
     echo
-    echo -e "${GREEN}Bitwise v$("$BIN" --version | awk '{print $2}') listo${RESET}"
+    echo -e "${GREEN}Bitwise v$("$BIN" --version | awk '{print $2}') listo por k2sy${RESET}"
 else
     fail "el binario no se generó; revisa los errores de cargo arriba"
 fi
