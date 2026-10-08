@@ -171,7 +171,11 @@ bitwise/
 - [x] Lifter AArch64 (stp/ldp/adrp/cbz/b.cond)
 - [x] Desensamblado RISC-V / MIPS / PowerPC
 - [x] Debugger backends skeleton: Windows (Debug API) y macOS (Mach exceptions)
-- [x] Base de datos de firmas de funciones 
+- [x] Base de datos de firmas de funciones
+- [x] Detección de funciones por call-graph (binarios stripped)
+- [x] DWARF debug info (nombres de funciones de binarios -g)
+- [x] TUI interactiva: vista funciones, renombrado (r) y decompilado (d) integrados
+- [x] CI multi-plataforma + releases automáticos (GitHub Actions) 
 
 ## 🤝 Contribuir
 

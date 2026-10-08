@@ -16,6 +16,8 @@ pub mod cfg_dot;
 
 pub use view::ViewMode;
 
+use bitwise_core::analysis::annotations::Project;
+
 /// Estado global de la sesión TUI.
 pub struct TuiSession {
     pub info: BinaryInfo,
@@ -30,6 +32,14 @@ pub struct TuiSession {
     pub running: bool,
     /// Texto de estado (mensajes al usuario)
     pub status: String,
+    /// Funciones detectadas (call-graph + símbolos + prólogos)
+    pub functions: Vec<u64>,
+    /// Proyecto de annotations persistente
+    pub project: Project,
+    /// Path del binario (para guardar el proyecto)
+    pub bin_path: std::path::PathBuf,
+    /// Última decompilación mostrada (vista decomp)
+    pub last_decomp: String,
 }
 
 impl TuiSession {
@@ -45,6 +55,9 @@ impl TuiSession {
             Err(_) => (None, Vec::new()),
         };
 
+        let functions = bitwise_core::analysis::detect_functions(&instructions, &info.symbols);
+        let project = Project::load_for(path);
+
         Ok(Self {
             info,
             disasm,
@@ -55,6 +68,10 @@ impl TuiSession {
             query: String::new(),
             running: false,
             status: String::new(),
+            functions,
+            project,
+            bin_path: path.to_path_buf(),
+            last_decomp: String::new(),
         })
     }
 
@@ -64,6 +81,8 @@ impl TuiSession {
             ViewMode::Disasm => self.instructions.len(),
             ViewMode::Symbols => self.info.symbols.len(),
             ViewMode::Sections => self.info.sections.len(),
+            ViewMode::Functions => self.functions.len(),
+            ViewMode::Decomp => self.last_decomp.lines().count(),
             ViewMode::Help => 1,
         }
     }
@@ -124,8 +143,113 @@ impl TuiSession {
                 .take(height)
                 .map(section_line)
                 .collect(),
+            ViewMode::Functions => {
+                let end = (self.scroll + height).min(self.functions.len());
+                self.functions[self.scroll.min(self.functions.len())..end]
+                    .iter()
+                    .map(|&addr| {
+                        let name = self
+                            .project
+                            .function_name(addr)
+                            .map(|s| s.to_string())
+                            .or_else(|| {
+                                self.info
+                                    .symbols
+                                    .iter()
+                                    .find(|s| s.address == addr)
+                                    .map(|s| s.name.clone())
+                            })
+                            .unwrap_or_else(|| format!("func_{:x}", addr));
+                        format!("  {:#018x}  {}", addr, name)
+                    })
+                    .collect()
+            }
+            ViewMode::Decomp => {
+                let lines: Vec<&str> = self.last_decomp.lines().collect();
+                let end = (self.scroll + height).min(lines.len());
+                lines[self.scroll.min(lines.len())..end]
+                    .iter()
+                    .map(|l| l.to_string())
+                    .collect()
+            }
             ViewMode::Help => crate::view::HELP_TEXT.lines().map(|l| l.to_string()).collect(),
         }
+    }
+
+    /// Dirección de la función bajo el cursor (vista Functions).
+    pub fn current_function(&self) -> Option<u64> {
+        if self.mode != ViewMode::Functions {
+            return None;
+        }
+        self.functions.get(self.cursor).copied()
+    }
+
+    /// Renombra la función bajo el cursor y guarda el proyecto.
+    pub fn rename_current_function(&mut self, new_name: &str) -> bool {
+        if let Some(addr) = self.current_function() {
+            self.project.rename_function(addr, new_name);
+            let saved = self.project.save_for(&self.bin_path).is_ok();
+            self.status = if saved {
+                format!("renamed {:#x} → {}", addr, new_name)
+            } else {
+                format!("renamed (pero falló el guardado) {:#x} → {}", addr, new_name)
+            };
+            true
+        } else {
+            self.status = "r solo funciona en la vista de funciones (tecla 5)".into();
+            false
+        }
+    }
+
+    /// Decompila la función bajo el cursor y cambia a la vista Decomp.
+    pub fn decompile_current_function(&mut self) -> bool {
+        let Some(addr) = self.current_function() else {
+            self.status = "d solo funciona en la vista de funciones (tecla 5)".into();
+            return false;
+        };
+
+        // slicing de la función
+        let mut sorted = self.instructions.clone();
+        sorted.sort_by_key(|i| i.address);
+        let next_start = self
+            .functions
+            .iter()
+            .filter(|&&a| a > addr)
+            .min()
+            .copied()
+            .unwrap_or(u64::MAX);
+
+        let func_insns: Vec<_> = sorted
+            .iter()
+            .filter(|i| i.address >= addr && i.address < next_start)
+            .cloned()
+            .collect();
+
+        if func_insns.is_empty() {
+            self.status = format!("sin instrucciones en {:#x}", addr);
+            return false;
+        }
+
+        let mut lifter = bitwise_lift::Lifter::new(bitwise_lift::RegisterMap::x86_64());
+        let raw = lifter.lift_all(&func_insns);
+        let pcode = bitwise_decomp::optimize(&raw);
+        let blocks = bitwise_lift::Lifter::build_blocks(&pcode);
+
+        let name = self
+            .project
+            .function_name(addr)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("func_{:x}", addr));
+
+        let mut ir_func = bitwise_ir::IrFunction::new(&name, addr);
+        ir_func.blocks = blocks;
+
+        let mut decompiler = bitwise_decomp::Decompiler::new();
+        self.last_decomp = decompiler.decompile(&ir_func);
+        self.mode = ViewMode::Decomp;
+        self.cursor = 0;
+        self.scroll = 0;
+        true
     }
 }
 
@@ -199,6 +323,20 @@ pub fn run(session: &mut TuiSession) -> io::Result<()> {
                     KeyCode::Char('2') => { session.mode = ViewMode::Symbols; session.cursor = 0; session.scroll = 0; }
                     KeyCode::Char('3') => { session.mode = ViewMode::Sections; session.cursor = 0; session.scroll = 0; }
                     KeyCode::Char('4') => { session.mode = ViewMode::Help; }
+                    KeyCode::Char('5') => { session.mode = ViewMode::Functions; session.cursor = 0; session.scroll = 0; session.status.clear(); }
+                    KeyCode::Char('6') => { session.mode = ViewMode::Decomp; session.cursor = 0; session.scroll = 0; }
+                    KeyCode::Char('r') => {
+                        session.status = "renombrar: (escribe nombre y Enter, Esc cancela)".into();
+                        redraw(session, term_h, &mut stdout)?;
+                        let name = read_line_raw_at(&mut stdout, "rename: ")?;
+                        session.status.clear();
+                        if !name.is_empty() {
+                            session.rename_current_function(&name);
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        session.decompile_current_function();
+                    }
                     KeyCode::Char('/') => {
                         // búsqueda simple: leer línea desde stdin crudo es complejo;
                         // usamos status para indicar el modo y capturamos caracteres
@@ -228,7 +366,7 @@ fn redraw(session: &TuiSession, height: usize, stdout: &mut io::Stdout) -> io::R
     queue!(stdout, MoveTo(0, 0))?;
 
     let title = format!(
-        " bitwise │ {} │ {:?} {:?} │ [1]disasm [2]sym [3]sect [4]help [/]search [q]uit ",
+        " bitwise │ {} │ {:?} {:?} │ [1]disasm [2]sym [3]sect [5]funcs [6]decomp [4]help [r]ename [d]ecomp [/]search [q]uit ",
         session.info.path,
         session.info.format,
         session.info.architecture
@@ -264,6 +402,11 @@ fn redraw(session: &TuiSession, height: usize, stdout: &mut io::Stdout) -> io::R
 
 /// Lee una línea caracter a caracter en raw mode (para la búsqueda '/').
 fn read_line_raw(stdout: &mut io::Stdout) -> io::Result<String> {
+    read_line_raw_at(stdout, "buscar: ")
+}
+
+/// Lee una línea con prompt configurable (búsqueda y renombrado).
+fn read_line_raw_at(stdout: &mut io::Stdout, prompt: &str) -> io::Result<String> {
     use crossterm::event::{Event, KeyCode};
     let mut buf = String::new();
     loop {
@@ -283,7 +426,7 @@ fn read_line_raw(stdout: &mut io::Stdout) -> io::Result<String> {
             use crossterm::cursor::MoveTo;
             use crossterm::style::Print;
             use crossterm::queue;
-            queue!(stdout, MoveTo(0, 23), Print(format!("buscar: {}  ", buf)))?;
+            queue!(stdout, MoveTo(0, 23), Print(format!("{}{}  ", prompt, buf)))?;
             stdout.flush()?;
         }
     }

@@ -5,6 +5,7 @@ pub mod packer;
 pub mod annotations;
 pub mod cpp;
 pub mod signatures;
+pub mod dwarf;
 
 use crate::arch::Instruction;
 use std::collections::{BTreeMap, BTreeSet};
@@ -84,7 +85,7 @@ pub struct BasicBlock {
     pub is_function_start: bool,
 }
 
-/// Detecta funciones por heurística (símbolos + prólogos).
+/// Detecta funciones por heurística (símbolos + prólogos + call-graph).
 pub fn detect_functions(instructions: &[Instruction], symbols: &[crate::Symbol]) -> Vec<u64> {
     let mut function_starts: BTreeSet<u64> = BTreeSet::new();
 
@@ -115,6 +116,12 @@ pub fn detect_functions(instructions: &[Instruction], symbols: &[crate::Symbol])
         }
     }
 
+    // Call-graph: todo target directo de un call es inicio de función.
+    // Es la técnica estándar (Ghidra/Rizin) y cubre binarios stripped.
+    for addr in functions_from_calls(instructions) {
+        function_starts.insert(addr);
+    }
+
     // Si no hay funciones detectadas, la dirección más baja es entry
     if function_starts.is_empty() {
         if let Some(first) = instructions.first() {
@@ -123,6 +130,30 @@ pub fn detect_functions(instructions: &[Instruction], symbols: &[crate::Symbol])
     }
 
     function_starts.into_iter().collect()
+}
+
+/// Extrae los targets de todos los `call` directos (inmediato) del binario.
+/// Cada uno es un candidato a inicio de función — funciona sin símbolos.
+pub fn functions_from_calls(instructions: &[Instruction]) -> Vec<u64> {
+    let mut targets: BTreeSet<u64> = BTreeSet::new();
+    for insn in instructions {
+        if insn.mnemonic == "call" || insn.mnemonic == "bl" {
+            // target directo: primer operando hex
+            for part in insn.operands.split(|c: char| c == ',' || c == ' ') {
+                let part = part.trim();
+                if let Some(hex) = part.strip_prefix("0x") {
+                    if let Ok(addr) = u64::from_str_radix(hex, 16) {
+                        // filtrar calls a PLT-stubs muy bajos o basura (0)
+                        if addr > 0 {
+                            targets.insert(addr);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    targets.into_iter().collect()
 }
 
 /// Construye bloques básicos desde instrucciones y puntos de entrada de función.

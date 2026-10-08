@@ -8,5 +8,7 @@ license.workspace = true
 bitwise-core = { path = "../bitwise-core" }
 bitwise-disasm = { path = "../bitwise-disasm" }
 bitwise-ir = { path = "../bitwise-ir" }
+bitwise-lift = { path = "../bitwise-lift" }
+bitwise-decomp = { path = "../bitwise-decomp" }
 crossterm = "0.28"
 thiserror.workspace = true

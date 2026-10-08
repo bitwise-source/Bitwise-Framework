@@ -6,6 +6,8 @@ pub enum ViewMode {
     Disasm,
     Symbols,
     Sections,
+    Functions,
+    Decomp,
     Help,
 }
 
@@ -18,12 +20,21 @@ Teclas:
   1            vista desensamblado
   2            vista símbolos
   3            vista secciones
+  5            vista funciones (call-graph)
+  6            vista decompilación
   4            esta ayuda
   /            buscar en símbolos
+  r            renombrar función bajo el cursor (vista funciones)
+  d            decompilar función bajo el cursor (vista funciones)
   q / Esc      salir
 
 Vistas:
-  disasm    instrucciones nativas (Capstone, sintaxis Intel)
-  symbols   símbolos del binario (funciones, objetos)
-  sections  secciones con permisos rwx
-";
+  disasm     instrucciones nativas (Capstone, sintaxis Intel)
+  symbols    símbolos del binario (funciones, objetos)
+  sections   secciones con permisos rwx
+  functions  funciones detectadas (símbolos + prólogos + call-graph)
+  decomp     pseudo-C de la última función decompilada
+
+Annotations:
+  Los renombres se guardan en <binario>.bitwise.json y se
+  reutilizan en cada decompilación (CLI, TUI y MCP).";
