@@ -149,6 +149,25 @@ enum Commands {
         #[arg(long)]
         backup: bool,
     },
+    /// Emula ejecución de una función (interpreter x86-64)
+    Emu {
+        file: PathBuf,
+        /// Dirección de entrada (hex). Por defecto, entry point.
+        #[arg(short = 'f', long)]
+        entry: Option<String>,
+        /// Máximo de instrucciones (default 1000)
+        #[arg(short = 'n', long, default_value = "1000")]
+        max_instructions: u64,
+        /// Dirección de memoria a volcar al final (hex), ej 0x2000
+        #[arg(long, value_parser = parse_u64, num_args = 1..)]
+        dump_mem: Vec<u64>,
+        /// Tamaño del volcado en bytes (default 64)
+        #[arg(long, default_value = "64")]
+        dump_size: usize,
+        /// Dirección donde detenerse antes de tiempo (hex)
+        #[arg(long, value_parser = parse_u64, num_args = 1..)]
+        stop_at: Vec<u64>,
+    },
 }
 
 fn main() {
@@ -201,6 +220,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Patch { file, at, with, backup } => {
             cmd_patch(&file, &at, &with, backup)
         }
+        Commands::Emu {
+            file,
+            entry,
+            max_instructions,
+            dump_mem,
+            dump_size,
+            stop_at,
+        } => cmd_emu(&file, entry.as_deref(), max_instructions, &dump_mem, dump_size, &stop_at),
     }
 }
 
@@ -808,8 +835,45 @@ fn hex_to_bytes(s: &str) -> std::result::Result<Vec<u8>, String> {
     }
     (0..s.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i+2], 16).map_err(|e| format!("hex inválido: {}", e)))
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| format!("hex inválido: {}", e)))
         .collect()
+}
+
+fn cmd_emu(
+    file: &PathBuf,
+    entry: Option<&str>,
+    max_instructions: u64,
+    dump_mem: &[u64],
+    dump_size: usize,
+    stop_at: &[u64],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+
+    let entry_addr = entry.map(|f| {
+        let s = f.trim_start_matches("0x");
+        u64::from_str_radix(s, 16).unwrap_or(0)
+    });
+
+    let dump: Vec<(u64, usize)> = dump_mem.iter().map(|&a| (a, dump_size)).collect();
+
+    let cfg = bitwise_emu::EmuConfig {
+        entry: entry_addr.unwrap_or(0),
+        max_instructions,
+        stop_addresses: stop_at.to_vec(),
+        dump_registers: vec![],
+        dump_memory: dump,
+    };
+
+    println!("{} {:?} from {:#x} (max {} insns)",
+        "Emulating".cyan().bold(),
+        info.architecture,
+        if entry_addr.unwrap_or(0) == 0 { info.entry_point.unwrap_or(0) } else { entry_addr.unwrap_or(0) },
+        max_instructions
+    );
+
+    let result = bitwise_emu::emulate(&info, &cfg);
+    print!("{}", bitwise_emu::format_result(&result));
+    Ok(())
 }
 
 fn format_size(bytes: u64) -> String {

@@ -11,6 +11,7 @@ members = [
     "bitwise-debug",
     "bitwise-script",
     "bitwise-mcp",
+    "bitwise-emu",
 ]
 
 [workspace.package]

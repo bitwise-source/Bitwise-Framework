@@ -17,6 +17,7 @@ bitwise-decomp = { path = "../bitwise-decomp" }
 bitwise-tui = { path = "../bitwise-tui" }
 bitwise-debug = { path = "../bitwise-debug" }
 bitwise-script = { path = "../bitwise-script" }
+bitwise-emu = { path = "../bitwise-emu" }
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 serde_json.workspace = true
