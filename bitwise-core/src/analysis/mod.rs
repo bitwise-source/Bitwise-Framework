@@ -2,6 +2,7 @@
 
 pub mod refs;
 pub mod packer;
+pub mod annotations;
 
 use crate::arch::Instruction;
 use std::collections::{BTreeMap, BTreeSet};

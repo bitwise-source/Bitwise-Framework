@@ -168,6 +168,22 @@ enum Commands {
         #[arg(long, value_parser = parse_u64, num_args = 1..)]
         stop_at: Vec<u64>,
     },
+    /// Renombra funciones/variables y guarda en proyecto .bitwise.json
+    Annotate {
+        file: PathBuf,
+        /// Renombra función: --func 0x4da4 main
+        #[arg(long, value_names = ["ADDR", "NAME"], num_args = 2)]
+        funcs: Vec<String>,
+        /// Renombra variable/temp: --var t1000 filename
+        #[arg(long, value_names = ["TEMP", "NAME"], num_args = 2)]
+        vars: Vec<String>,
+        /// Comentario: --comment 0x4da4 "descifra el string"
+        #[arg(long, value_names = ["ADDR", "TEXT"], num_args = 2)]
+        comments: Vec<String>,
+        /// Mostrar el proyecto actual
+        #[arg(short, long)]
+        show: bool,
+    },
 }
 
 fn main() {
@@ -228,6 +244,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             dump_size,
             stop_at,
         } => cmd_emu(&file, entry.as_deref(), max_instructions, &dump_mem, dump_size, &stop_at),
+        Commands::Annotate {
+            file,
+            funcs,
+            vars,
+            comments,
+            show,
+        } => cmd_annotate(&file, &funcs, &vars, &comments, show),
     }
 }
 
@@ -873,6 +896,57 @@ fn cmd_emu(
 
     let result = bitwise_emu::emulate(&info, &cfg);
     print!("{}", bitwise_emu::format_result(&result));
+    Ok(())
+}
+
+fn cmd_annotate(
+    file: &PathBuf,
+    funcs: &[String],
+    vars: &[String],
+    comments: &[String],
+    show: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use bitwise_core::analysis::annotations::Project;
+
+    let path = std::path::Path::new(file);
+    let mut proj = Project::load_for(path);
+
+    for pair in funcs.chunks(2) {
+        if pair.len() != 2 {
+            continue;
+        }
+        let addr = u64::from_str_radix(pair[0].trim_start_matches("0x"), 16)?;
+        proj.rename_function(addr, &pair[1]);
+    }
+
+    for pair in vars.chunks(2) {
+        if pair.len() != 2 {
+            continue;
+        }
+        let temp_id = pair[0].trim_start_matches('t').parse::<u64>()?;
+        proj.rename_variable(temp_id, &pair[1]);
+    }
+
+    for pair in comments.chunks(2) {
+        if pair.len() != 2 {
+            continue;
+        }
+        let addr = u64::from_str_radix(pair[0].trim_start_matches("0x"), 16)?;
+        proj.add_comment(addr, &pair[1]);
+    }
+
+    proj.save_for(path)?;
+
+    if show || (funcs.is_empty() && vars.is_empty() && comments.is_empty()) {
+        println!("{}", serde_json::to_string_pretty(&proj)?);
+    } else {
+        println!(
+            "{} proyecto guardado en {}.bitwise.json",
+            "OK".green().bold(),
+            file.display()
+        );
+    }
+
     Ok(())
 }
 
