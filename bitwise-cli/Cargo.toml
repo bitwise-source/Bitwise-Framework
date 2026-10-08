@@ -8,6 +8,14 @@ license.workspace = true
 name = "bitwise"
 path = "src/main.rs"
 
+[[bin]]
+name = "bitwise-hardening"
+path = "src/hardening.rs"
+
+[[bin]]
+name = "bitwise-decomp-stress"
+path = "src/decomp_stress.rs"
+
 [dependencies]
 bitwise-core = { path = "../bitwise-core" }
 bitwise-disasm = { path = "../bitwise-disasm" }
