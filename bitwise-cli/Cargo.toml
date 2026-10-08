@@ -16,6 +16,10 @@ path = "src/hardening.rs"
 name = "bitwise-decomp-stress"
 path = "src/decomp_stress.rs"
 
+[[bin]]
+name = "bitwise-siggen"
+path = "src/siggen.rs"
+
 [dependencies]
 bitwise-core = { path = "../bitwise-core" }
 bitwise-disasm = { path = "../bitwise-disasm" }

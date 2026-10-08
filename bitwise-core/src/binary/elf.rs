@@ -290,6 +290,10 @@ pub fn parse_elf(data: &[u8], path: &Path) -> Result<BinaryInfo> {
         let sh_offset_data = r.read_off();
         let sh_size = r.read_off();
         let sh_link = r.read_u32();
+        // sh_info (4 bytes) y sh_addralign (8 en ELF64, 4 en ELF32)
+        // van entre sh_link y sh_entsize.
+        let _sh_info = r.read_u32();
+        let _sh_addralign = r.read_off();
         let sh_entsize = if is_64 {
             r.read_u64()
         } else {
