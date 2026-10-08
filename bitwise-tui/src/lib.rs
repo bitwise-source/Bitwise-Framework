@@ -12,6 +12,7 @@ use std::io::{self, Write};
 
 pub mod view;
 pub mod hexdump;
+pub mod cfg_dot;
 
 pub use view::ViewMode;
 

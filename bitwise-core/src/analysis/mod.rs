@@ -1,6 +1,7 @@
 //! Análisis estructural: Control Flow Graph y detección de funciones.
 
 pub mod refs;
+pub mod packer;
 
 use crate::arch::Instruction;
 use std::collections::{BTreeMap, BTreeSet};

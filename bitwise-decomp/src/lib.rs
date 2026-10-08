@@ -7,9 +7,11 @@ use std::collections::HashMap;
 
 pub mod structuring;
 pub mod type_recovery;
+pub mod optimizer;
 
 pub use structuring::{Structured, Structurer};
 pub use type_recovery::{TypeContext, VarType};
+pub use optimizer::optimize;
 
 // ============================================================================
 // Expression Builder — convierte instrucciones IR en expresiones anidadas

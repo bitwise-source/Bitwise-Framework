@@ -123,6 +123,32 @@ enum Commands {
         file_a: PathBuf,
         file_b: PathBuf,
     },
+    /// Exporta el CFG a Graphviz (.dot) para visualizar con `dot -Tpng`
+    CfgDot {
+        file: PathBuf,
+        /// Dirección de función (hex). Si se omite, exporta las primeras N
+        #[arg(short = 'f', long)]
+        function: Option<String>,
+        /// Cantidad de funciones a exportar (default 3)
+        #[arg(short = 'n', long, default_value = "3")]
+        max_funcs: usize,
+    },
+    /// Detecta packers y ofuscación (UPX, ASPack, MPRESS, entropía)
+    Packer {
+        file: PathBuf,
+    },
+    /// Reescribe bytes del binario en disco (parcheo manual)
+    Patch {
+        file: PathBuf,
+        /// Parches a aplicar: cada flag es offset+hex_bytes, ej --at 0x1000 --with 9090
+        #[arg(long, value_parser = parse_u64)]
+        at: Vec<u64>,
+        #[arg(long, value_parser = parse_hex)]
+        with: Vec<String>,
+        /// Crear backup .bak antes de modificar
+        #[arg(long)]
+        backup: bool,
+    },
 }
 
 fn main() {
@@ -168,7 +194,27 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Debug { file, breakpoint, args } => cmd_debug(&file, breakpoint.as_deref(), &args),
         Commands::Script { script_file } => cmd_script(&script_file),
         Commands::Diff { file_a, file_b } => cmd_diff(&file_a, &file_b),
+        Commands::CfgDot { file, function, max_funcs } => {
+            cmd_cfg_dot(&file, function.as_deref(), max_funcs)
+        }
+        Commands::Packer { file } => cmd_packer(&file),
+        Commands::Patch { file, at, with, backup } => {
+            cmd_patch(&file, &at, &with, backup)
+        }
     }
+}
+
+fn parse_u64(s: &str) -> std::result::Result<u64, String> {
+    let s = s.trim_start_matches("0x");
+    u64::from_str_radix(s, 16).map_err(|e| format!("offset inválido '{}': {}", s, e))
+}
+
+fn parse_hex(s: &str) -> std::result::Result<String, String> {
+    let s = s.replace(' ', "").replace(',', "");
+    if s.len() % 2 != 0 {
+        return Err(format!("hex string de longitud impar: '{}'", s));
+    }
+    Ok(s)
 }
 
 fn cmd_info(file: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -368,7 +414,8 @@ fn cmd_ir(
     };
 
     let mut lifter = bitwise_lift::Lifter::new(bitwise_lift::RegisterMap::x86_64());
-    let pcode: Vec<PcodeInst> = lifter.lift_all(&instructions);
+    let pcode_raw = lifter.lift_all(&instructions);
+    let pcode = bitwise_decomp::optimize(&pcode_raw);
 
     println!("{} {} pcode ops", "IR:".green().bold(), pcode.len());
     println!();
@@ -429,7 +476,8 @@ fn cmd_decompile(
         }
 
         let mut lifter = bitwise_lift::Lifter::new(bitwise_lift::RegisterMap::x86_64());
-        let pcode = lifter.lift_all(&func_insns);
+        let pcode_raw = lifter.lift_all(&func_insns);
+        let pcode = bitwise_decomp::optimize(&pcode_raw);
         let blocks = bitwise_lift::Lifter::build_blocks(&pcode);
 
         let mut ir_func = bitwise_ir::IrFunction::new(&format!("func_{:x}", target), target);
@@ -684,6 +732,84 @@ fn cmd_diff(file_a: &PathBuf, file_b: &PathBuf) -> Result<(), Box<dyn std::error
     println!("  {} {} símbolos compartidos cambiaron de dirección", "moved:".bold(), moved);
 
     Ok(())
+}
+
+fn cmd_cfg_dot(file: &PathBuf, function: Option<&str>, max_funcs: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+    let func = function.map(|f| {
+        let s = f.trim_start_matches("0x");
+        u64::from_str_radix(s, 16).unwrap_or(0)
+    });
+    let dot = bitwise_tui::cfg_dot::bin_to_dot(&info, func, max_funcs);
+    println!("{}", dot);
+    eprintln!("{} guarda esto a un archivo .dot y abrí con `dot -Tpng file.dot -o file.png`", "tip:".cyan());
+    Ok(())
+}
+
+fn cmd_packer(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let info = binary::load_binary(file)?;
+    let report = bitwise_core::analysis::packer::analyze(&info);
+
+    if report.matches.is_empty() && !report.is_likely_packed {
+        println!("{}", "no se detectaron packers conocidos".green());
+    }
+
+    println!("{} score: {:.2} ({} packed)",
+        if report.is_likely_packed { "Packer:".red().bold() } else { "Packer:".green().bold() },
+        report.score,
+        if report.is_likely_packed { "LIKELY" } else { "no" }
+    );
+    println!("  entropy: {:.2} bits/byte", report.entropy);
+    println!("  VS >> RS anomaly: {}", report.anomaly_vs_raw);
+
+    if !report.matches.is_empty() {
+        println!("\n  matches:");
+        for m in &report.matches {
+            println!("    {} @ {:#x}  (sig: {:?})", m.name.yellow(), m.offset, m.signature);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_patch(
+    file: &PathBuf,
+    at: &[u64],
+    with: &[String],
+    backup: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if at.len() != with.len() {
+        return Err(format!(
+            "--at y --with deben tener la misma cantidad de elementos ({} vs {})",
+            at.len(), with.len()
+        ).into());
+    }
+    let info = binary::load_binary(file)?;
+
+    let mut patches: Vec<(u64, Vec<u8>)> = Vec::new();
+    for (off, hex) in at.iter().zip(with.iter()) {
+        let bytes = hex_to_bytes(hex)?;
+        patches.push((*off, bytes));
+    }
+
+    bitwise_core::analysis::packer::patch_bytes(&info, &patches, backup)?;
+    println!("{} parcheado {} bytes en {} ubicación(es){}",
+        "OK".green().bold(),
+        patches.iter().map(|(_, b)| b.len()).sum::<usize>(),
+        patches.len(),
+        if backup { " (backup .bak guardado)" } else { "" }
+    );
+    Ok(())
+}
+
+fn hex_to_bytes(s: &str) -> std::result::Result<Vec<u8>, String> {
+    let s = s.replace(' ', "").replace(',', "");
+    if s.len() % 2 != 0 {
+        return Err(format!("hex string de longitud impar: '{}'", s));
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i+2], 16).map_err(|e| format!("hex inválido: {}", e)))
+        .collect()
 }
 
 fn format_size(bytes: u64) -> String {

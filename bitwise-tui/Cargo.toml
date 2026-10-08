@@ -7,5 +7,6 @@ license.workspace = true
 [dependencies]
 bitwise-core = { path = "../bitwise-core" }
 bitwise-disasm = { path = "../bitwise-disasm" }
+bitwise-ir = { path = "../bitwise-ir" }
 crossterm = "0.28"
 thiserror.workspace = true
