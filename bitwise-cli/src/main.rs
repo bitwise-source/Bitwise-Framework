@@ -492,6 +492,11 @@ fn cmd_decompile(
 
     let functions = analysis::detect_functions(&instructions, &info.symbols);
 
+    // Cargar el proyecto de annotations para aplicar renombres
+    let proj = bitwise_core::analysis::annotations::Project::load_for(
+        std::path::Path::new(file),
+    );
+
     let targets: Vec<u64> = if let Some(f) = function {
         let addr = u64::from_str_radix(f.trim_start_matches("0x"), 16)?;
         vec![addr]
@@ -530,11 +535,32 @@ fn cmd_decompile(
         let pcode = bitwise_decomp::optimize(&pcode_raw);
         let blocks = bitwise_lift::Lifter::build_blocks(&pcode);
 
-        let mut ir_func = bitwise_ir::IrFunction::new(&format!("func_{:x}", target), target);
+        // Usar el nombre del proyecto si existe, si no el default
+        let func_display_name = proj
+            .function_name(target)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("func_{:x}", target));
+
+        let mut ir_func = bitwise_ir::IrFunction::new(&func_display_name, target);
         ir_func.blocks = blocks;
 
         let code = decompiler.decompile(&ir_func);
-        println!("{}", code);
+
+        // Aplicar renombres de variables (tN → nombre) al texto de salida
+        let mut out = code;
+        for (key, name) in &proj.variables {
+            if let Some(temp_id) = key.strip_prefix('t').and_then(|s| s.parse::<u64>().ok()) {
+                // el decompilador genera nombres como u0_qword; mapeamos t{id}
+                // (el id interno) → nombre. Usamos un marker textual: t{id}
+                let marker = format!("t{}", temp_id);
+                // solo reintentar si aparece el id literal
+                if out.contains(&marker) || out.contains(&format!("u{}", temp_id)) {
+                    out = out.replace(&marker, name);
+                }
+            }
+        }
+
+        println!("{}", out);
         println!();
     }
 
