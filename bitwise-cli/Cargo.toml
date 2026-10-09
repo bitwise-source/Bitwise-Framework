@@ -34,3 +34,4 @@ clap = { version = "4", features = ["derive"] }
 colored = "2"
 serde_json.workspace = true
 thiserror.workspace = true
+ureq = "2"

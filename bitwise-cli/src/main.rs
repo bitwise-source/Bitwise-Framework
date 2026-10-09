@@ -206,6 +206,20 @@ enum Commands {
                 #[arg(short, long)]
                 deep: bool,
             },
+            /// Deobfuscador/beautifier de JavaScript
+            Js {
+                /// Archivo .js local o URL del script
+                input: String,
+                /// Solo mostrar stats/score de ofuscación
+                #[arg(short, long)]
+                stats: bool,
+                /// Solo beautify (sin renombrar)
+                #[arg(short = 'B', long)]
+                beautify_only: bool,
+                /// Buscar y descargar sourcemaps (si input es URL)
+                #[arg(short = 'm', long)]
+                sourcemaps: bool,
+            },
             }
 
 fn main() {
@@ -276,6 +290,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Demangle { file, vtables } => cmd_demangle(&file, vtables),
         Commands::Identify { file, signatures } => cmd_identify(&file, signatures.as_deref()),
         Commands::Web { url, deep } => cmd_web(&url, deep),
+        Commands::Js { input, stats, beautify_only, sourcemaps } => {
+            cmd_js(&input, stats, beautify_only, sourcemaps)
+        }
     }
 }
 
@@ -1080,6 +1097,79 @@ fn cmd_web(url: &str, deep: bool) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("no se pudo analizar: {}", e))?;
 
     print!("{}", bitwise_core::analysis::web::format_report(&report));
+    Ok(())
+}
+
+fn cmd_js(
+    input: &str,
+    stats_only: bool,
+    beautify_only: bool,
+    with_sourcemaps: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use bitwise_core::analysis::js_deobf;
+
+    // cargar desde URL o archivo local
+    let js = if input.starts_with("http://") || input.starts_with("https://") {
+        let resp = ureq::get(input).call().map_err(|e| e.to_string())?;
+        let mut body = String::new();
+        use std::io::Read;
+        resp.into_reader()
+            .take(10_000_000)
+            .read_to_string(&mut body)
+            .map_err(|e| e.to_string())?;
+        body
+    } else {
+        std::fs::read_to_string(input)?
+    };
+
+    // stats + score siempre
+    let (stats, score) = js_deobf::analyze_js(&js);
+    eprintln!("── stats ──────────────────────");
+    eprintln!("  bytes: {}  líneas: {}", stats.bytes, stats.lines);
+    eprintln!("  funciones: {}  strings: ~{}", stats.functions, stats.strings);
+    eprintln!("  idents hex (_0x..): {}  eval: {}  atob: {}", stats.hex_idents, stats.eval_calls, stats.atob_calls);
+    eprintln!("  score de ofuscación: {:.2} {}", score, if score > 0.5 { "⚠ OFUSCADO" } else { "ok" });
+    eprintln!("───────────────────────────────");
+
+    // sourcemaps
+    if with_sourcemaps {
+        let maps = bitwise_core::analysis::web::find_sourcemaps(&js);
+        if maps.is_empty() {
+            eprintln!("sourcemaps: ninguno declarado");
+        } else {
+            eprintln!("sourcemaps declarados: {}", maps.join(", "));
+            // intentar descargar el primero si es URL de entrada
+            if input.starts_with("http") {
+                for m in &maps {
+                    let map_url = bitwise_core::analysis::web::resolve_url(m, input);
+                    if let Ok(resp) = ureq::get(&map_url).call() {
+                        let mut body = String::new();
+                        use std::io::Read;
+                        resp.into_reader().take(5_000_000).read_to_string(&mut body).ok();
+                        if let Ok(sources) = bitwise_core::analysis::web::parse_sourcemap(&body) {
+                            eprintln!("  ↳ {}: {} archivos fuente:", m, sources.len());
+                            for s in sources.iter().take(30) {
+                                eprintln!("      {}", s);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // stats-only termina acá
+    if stats_only {
+        return Ok(());
+    }
+
+    // beautify o deobfuscate
+    let out = if beautify_only {
+        js_deobf::beautify(&js)
+    } else {
+        js_deobf::deobfuscate(&js)
+    };
+    print!("{}", out);
     Ok(())
 }
 

@@ -463,6 +463,34 @@ pub fn format_report(r: &WebReport) -> String {
     out
 }
 
+/// Detecta sourcemaps públicos: busca //# sourceMappingURL= en el JS/HTML
+/// y descarga el .map si existe.
+pub fn find_sourcemaps(js: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in js.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("//# sourceMappingURL=") {
+            out.push(rest.trim().to_string());
+        } else if let Some(rest) = t.strip_prefix("// @ sourceMappingURL=") {
+            out.push(rest.trim().to_string());
+        }
+    }
+    out
+}
+
+/// Parsea un source map (v3) y extrae las rutas de los archivos fuente
+/// originales. Es JSON: {"version":3,"sources":[...],"names":[...],...}
+pub fn parse_sourcemap(map_json: &str) -> std::io::Result<Vec<String>> {
+    #[derive(serde::Deserialize)]
+    struct SourceMap {
+        #[serde(default)]
+        sources: Vec<String>,
+    }
+    let sm: SourceMap = serde_json::from_str(map_json)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    Ok(sm.sources)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
