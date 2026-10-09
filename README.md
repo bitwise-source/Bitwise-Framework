@@ -9,7 +9,7 @@
 [![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/Platforms-Linux%20%7C%20Windows%20%7C%20macOS-green)](#)
-[![Version](https://img.shields.io/badge/version-0.6.0-purple)](#)
+[![Version](https://img.shields.io/badge/version-0.3.5-purple)](#)
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions)](../../actions)
 
 Analiza **binarios** (ELF · PE · Mach-O) y **páginas web** — desensambla,
