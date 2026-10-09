@@ -341,49 +341,77 @@ fn content_type_for(p: &Path) -> &'static str {
     }
 }
 
-/// Abre un túnel público temporal. Devuelve el proceso hijo del ssh y la URL.
+/// Abre un túnel público temporal. Devuelve el proceso hijo y la URL.
 ///
-/// Proveedor: pinggy (ssh -p 80 a.pinggy.io, sin cuenta). Se intenta primero
-/// con subdominio fijo derivado del puerto para poder reusar la URL.
+/// Proveedor principal: cloudflared quick tunnel (sin cuenta, URL trycloudflare.com).
+///   cloudflared tunnel --url http://127.0.0.1:<port>
+/// Fallback SSH si cloudflared no está disponible:
+///   pinggy :80/:443 y localhost.run.
 pub fn open_tunnel(local_port: u16) -> Result<(std::process::Child, String)> {
+    // 1. cloudflared (preferido)
+    if let Some(bin) = find_cloudflared() {
+        match open_cloudflared(&bin, local_port) {
+            Ok(r) => return Ok(r),
+            Err(e) => eprintln!("  (cloudflared falló: {} — probando SSH)", e),
+        }
+    }
+    // 2. fallback SSH
+    open_tunnel_ssh(local_port)
+}
+
+fn find_cloudflared() -> Option<String> {
+    for c in ["cloudflared", "/usr/local/bin/cloudflared", "/usr/bin/cloudflared"] {
+        let found = if c.starts_with('/') {
+            std::path::Path::new(c).exists()
+        } else if let Ok(path) = std::env::var("PATH") {
+            path.split(':').any(|d| std::path::Path::new(d).join(c).exists())
+        } else {
+            false
+        };
+        if found {
+            return Some(c.to_string());
+        }
+    }
+    None
+}
+
+fn open_cloudflared(bin: &str, local_port: u16) -> Result<(std::process::Child, String)> {
+    use std::io::BufRead;
     use std::process::{Command, Stdio};
 
-    let mut child = Command::new("ssh")
+    let mut child = Command::new(bin)
         .args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-p",
-            "80",
-            "-R",
-            &format!("0:127.0.0.1:{}", local_port),
-            "a.pinggy.io",
+            "tunnel",
+            "--no-autoupdate",
+            "--url",
+            &format!("http://127.0.0.1:{}", local_port),
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| {
-            MirrorError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("ssh no disponible: {}", e),
-            ))
-        })?;
+        .map_err(|e| MirrorError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("spawn {}: {}", bin, e))))?;
 
-    // pinggy imprime la URL pública en stdout del ssh
-    let stdout = child.stdout.take().expect("stdout piped");
-    use std::io::BufRead;
-    let reader = std::io::BufReader::new(stdout);
+    // cloudflared imprime la URL trycloudflare.com en stderr (logs)
+    let stderr = child.stderr.take().expect("stderr piped");
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
     let mut tunnel_url = String::new();
-    let deadline = Instant::now() + Duration::from_secs(25);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    // el registro del quick tunnel en la edge de CF puede tardar >30s en redes lentas
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while let Ok(line) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         if let Some(s) = line.find("https://") {
             let rest = &line[s..];
             let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
             let cand = rest[..end].trim_end_matches('.').to_string();
-            // descartar links de dashboard/docs, quedarnos con el túnel
-            if cand.contains(".pinggy") && !cand.contains("dashboard") && !cand.contains("pinggy.io") {
+            if cand.contains("trycloudflare.com") {
                 tunnel_url = cand;
                 break;
             }
@@ -394,13 +422,125 @@ pub fn open_tunnel(local_port: u16) -> Result<(std::process::Child, String)> {
     }
 
     if tunnel_url.is_empty() {
+        // matar ANTES de tocar el reader: el hilo lector está bloqueado en
+        // read() del stderr del child; sin matarlo, join() deadlockea.
         let _ = child.kill();
+        let _ = child.wait();
+        let _ = reader.join();
         return Err(MirrorError::Http(
-            "no se pudo obtener la URL del túnel (pinggy no respondió)".into(),
+            "cloudflared no entregó URL trycloudflare (¿sin salida a internet?)".into(),
         ));
     }
 
+    // cloudflared es Go: si nadie lee su stderr, el pipe se llena o se cierra y
+    // el proceso muere por SIGPIPE al loguear. Drenar en background mientras viva.
+    std::thread::spawn(move || {
+        while rx.recv().is_ok() {}
+        let _ = reader.join();
+    });
+
     Ok((child, tunnel_url))
+}
+
+fn open_tunnel_ssh(local_port: u16) -> Result<(std::process::Child, String)> {
+    use std::io::BufRead;
+    use std::process::{Command, Stdio};
+
+    const PROVIDERS: &[(&str, u16, &str, &str)] = &[
+        // (host, puerto, remote-prefix, patrón de URL del túnel)
+        ("a.pinggy.io", 80, "", "pinggy"),
+        ("a.pinggy.io", 443, "", "pinggy"),
+        ("nokey@localhost.run", 22, "80:", "lhr.life"),
+    ];
+
+    let mut last_err = String::new();
+    for (host, port, remote_prefix, url_pattern) in PROVIDERS {
+        let remote = format!("{}0:127.0.0.1:{}", remote_prefix, local_port);
+        let child = Command::new("ssh")
+            .args([
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ConnectTimeout=15",
+                "-p", &port.to_string(),
+                "-R", &remote,
+                host,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                last_err = format!("ssh no disponible: {}", e);
+                continue;
+            }
+        };
+
+        // stdout y stderr en hilos separados; la URL puede venir por cualquiera
+        use std::io::Read;
+        fn box_stream<S: Read + Send + 'static>(s: Option<S>) -> Box<dyn Read + Send> {
+            match s {
+                Some(s) => Box::new(s),
+                None => Box::new(std::io::empty()),
+            }
+        }
+        let streams: Vec<Box<dyn Read + Send>> = vec![
+            box_stream(child.stdout.take()),
+            box_stream(child.stderr.take()),
+        ];
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let mut readers = Vec::new();
+        for stream in streams {
+            let tx = tx.clone();
+            readers.push(std::thread::spawn(move || {
+                for line in std::io::BufReader::new(stream).lines() {
+                    let Ok(line) = line else { break };
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        drop(tx);
+
+        let mut tunnel_url = String::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while let Ok(line) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            if let Some(s) = line.find("https://") {
+                let rest = &line[s..];
+                let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+                let cand = rest[..end].trim_end_matches('.').to_string();
+                if cand.contains(url_pattern)
+                    && !cand.contains("dashboard")
+                    && !cand.contains("localhost.run/docs")
+                    && !cand.contains("pinggy.io/")
+                {
+                    tunnel_url = cand;
+                    break;
+                }
+            }
+            if Instant::now() > deadline {
+                break;
+            }
+        }
+
+        if !tunnel_url.is_empty() {
+            return Ok((child, tunnel_url));
+        }
+        // matar antes del join: los hilos lectores están bloqueados en read()
+        let _ = child.kill();
+        let _ = child.wait();
+        for r in readers {
+            let _ = r.join();
+        }
+        last_err = format!("{} no entregó URL (patrón '{}')", host, url_pattern);
+    }
+
+    Err(MirrorError::Http(format!(
+        "ningún proveedor de túnel respondió (último: {})",
+        last_err
+    )))
 }
 
 #[cfg(test)]

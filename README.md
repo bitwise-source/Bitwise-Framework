@@ -204,8 +204,9 @@ bitwise mirror https://ejemplo.com -p 8080
 ```
 
 Salida: reporte de ingeniería inversa en pantalla + `bitwise-report.json`,
-URL local (`http://127.0.0.1:<puerto>`) y URL pública temporal (pinggy).
-Túnel anónimo con TTL limitado — para uso serio, token de pinggy/cloudflare.
+URL local (`http://127.0.0.1:<puerto>`) y URL pública temporal (Cloudflare
+Tunnel via `cloudflared`, incluido por build.sh; fallback SSH pinggy/localhost.run).
+Túnel anónimo con TTL limitado — para uso serio, named tunnel de Cloudflare.
 
 
 ### 🔓 Deobfuscar JavaScript

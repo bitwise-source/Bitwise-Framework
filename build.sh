@@ -82,17 +82,59 @@ if [ "$NEED_RUST" -eq 1 ]; then
 fi
 
 # ----------------------------------------------------------------------------
-# 3. Compilar (release)
+# 3. cloudflared (túnel público para 'bitwise mirror')
+# ----------------------------------------------------------------------------
+say "Verificando cloudflared..."
+if command -v cloudflared >/dev/null 2>&1; then
+    ok "cloudflared presente: $(cloudflared --version 2>/dev/null | head -1)"
+else
+    warn "cloudflared no encontrado. Instalando..."
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+        x86_64)  CF_ARCH="amd64" ;;
+        aarch64|arm64) CF_ARCH="arm64" ;;
+        *) fail "arquitectura no soportada para cloudflared: $ARCH" ;;
+    esac
+    CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -sL --fail "$CF_URL" -o /tmp/cloudflared || fail "descarga de cloudflared falló"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$CF_URL" -O /tmp/cloudflared || fail "descarga de cloudflared falló"
+    else
+        fail "necesitas curl o wget para instalar cloudflared"
+    fi
+    chmod +x /tmp/cloudflared
+    if [ -w /usr/local/bin ] 2>/dev/null; then
+        mv /tmp/cloudflared /usr/local/bin/cloudflared
+    else
+        sudo mv /tmp/cloudflared /usr/local/bin/cloudflared 2>/dev/null \
+            || mkdir -p "$HOME/.local/bin" && mv /tmp/cloudflared "$HOME/.local/bin/cloudflared"
+    fi
+    ok "cloudflared instalado"
+fi
+
+# ----------------------------------------------------------------------------
+# 4. Compilar (release)
 # ----------------------------------------------------------------------------
 say "Compilando Bitwise (modo release, primera vez tarda unos minutos)..."
 cargo build --release
 ok "compilación exitosa"
 
 # ----------------------------------------------------------------------------
-# 4. Verificación final
+# 5. Verificación final + PATH
 # ----------------------------------------------------------------------------
 BIN="./target/release/bitwise"
 if [ -x "$BIN" ]; then
+    # binario disponible en el PATH del usuario (idempotente)
+    BIN_DIR="$(cd ./target/release && pwd)"
+    case ":$PATH:" in
+        *":$BIN_DIR:"*) : ;; # ya está
+        *)
+            # shellcheck disable=SC2016
+            echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$HOME/.bashrc"
+            say "agregado $BIN_DIR al PATH en ~/.bashrc (reinciá la shell o: source ~/.bashrc)"
+            ;;
+    esac
     echo
     ok "Bitwise listo: ${BIN}"
     "$BIN" --version
