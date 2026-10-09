@@ -40,11 +40,11 @@ decompila a pseudo-C, debuggea, emula, y deobfusca JavaScript.
 | 🛡️ **Packers** | Detección UPX/ASPack/MPRESS + entropía + parcheo de binarios |
 | 🖥️ **TUI** | Interactiva: navega funciones, decompila (`d`), renombra (`r`) |
 | 🐚 **Scripting** | Lenguaje `.bws` embebido para automatizar análisis |
-| 🤖 **MCP Server** | Expón Bitwise a agentes de IA (Claude, Cursor) vía 18 herramientas |
+| 🤖 **MCP Server** | Expón Bitwise a agentes de IA (Claude, Cursor) vía 19 herramientas |
 
-## 🤖 MCP Server (integración con agentes de IA)
+## MCP Server (integración con agentes de IA)
 
-Bitwise se expone vía [Model Context Protocol](https://modelcontextprotocol.io/) para que agentes como Claude o Cursor lo usen directamente. El servidor `bitwise-mcp` corre sobre stdio (JSON-RPC newline-delimited) y ofrece **18 herramientas**:
+Bitwise se expone vía [Model Context Protocol](https://modelcontextprotocol.io/) para que agentes como Claude o Cursor lo usen directamente. El servidor `bitwise-mcp` corre sobre stdio (JSON-RPC newline-delimited) y ofrece **19 herramientas**:
 
 ### Binarios
 
@@ -73,6 +73,7 @@ Bitwise se expone vía [Model Context Protocol](https://modelcontextprotocol.io/
 | `bitwise_web` | Recon estático: endpoints, secrets, stack, formularios |
 | `bitwise_webdyn` | Render headless vía CDP: requests XHR/Fetch, DOM post-JS, ejecuta JS (`js`), screenshots (`screenshot`) |
 | `bitwise_js` | Deobfuscador JS: beautify, renombrado `_0x` → `vN`, score de ofuscación |
+| `bitwise_mirror` | Clona sitio + assets con ingeniería inversa (endpoints/secrets); servidor y túnel van por la CLI `bitwise mirror` |
 
 **Configuración para Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
@@ -162,7 +163,7 @@ bitwise web https://ejemplo.com
 bitwise web https://ejemplo.com --deep
 ```
 
-### 🎭 Análisis dinámico (CDP)
+### Análisis dinámico (CDP)
 
 Renderiza la página con un navegador headless real: captura requests XHR/Fetch
 invisibles al análisis estático, el DOM post-JS, y ejecuta JS arbitrario.
@@ -185,7 +186,7 @@ Requiere Chrome/Chromium instalado (`chromium`, `google-chrome` o
 `chrome-headless-shell` en PATH). Corriendo como root agrega `--no-sandbox`
 automáticamente.
 
-### 🪞 Mirror + túnel temporal
+### Mirror + túnel temporal
 
 Clona un sitio completo (HTML + todos sus assets: bundles React/Vue, CSS,
 imágenes), le hace ingeniería inversa (endpoints, secrets, bundles) y sirve
@@ -287,7 +288,7 @@ bitwise/
 - [x] CI multi-plataforma + releases automáticos (GitHub Actions)
 - [x] Recon de páginas web: endpoints, secrets, stack, formularios
 - [x] JS deobfuscator: beautify, renombrado, decodificación, sourcemaps
-- [x] MCP Server (18 herramientas: binarios + web/webdyn/js + hexdump/packer/identify/demangle/emu/diff/annotate)
+- [x] MCP Server (19 herramientas: binarios + web/webdyn/js/mirror + hexdump/packer/identify/demangle/emu/diff/annotate)
 - [x] Análisis dinámico web (navegador headless vía CDP — `bitwise web-dyn`)
 - [x] Decompilador interactivo: re-tipeo de variables desde la TUI (tecla `t`)
 - [x] Lifter AArch64: mul/div, lógica (orr/eor/mvn), ldr/str, br/blr, svc

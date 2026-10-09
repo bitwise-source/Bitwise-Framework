@@ -168,6 +168,15 @@ fn handle_tools_list() -> serde_json::Value {
             }),
             &["input"],
         ),
+        tool_def_req(
+            "bitwise_mirror",
+            "Clona un sitio (HTML + assets: bundles React/Vue, CSS, imágenes), le hace ingeniería inversa (endpoints, secrets por bundle) y devuelve el reporte. No abre túnel ni servidor — para eso usá la CLI 'bitwise mirror'",
+            serde_json::json!({
+                "url": {"type": "string", "description": "URL a clonar"},
+                "out": {"type": "string", "description": "Directorio de salida (default: ./mirror-<host>)"}
+            }),
+            &["url"],
+        ),
         tool_def(
             "bitwise_hexdump",
             "Hex dump del archivo completo o de una sección",
@@ -282,6 +291,14 @@ fn handle_tools_call(params: Option<&serde_json::Value>) -> Result<serde_json::V
                 Err(e) => error_content(e),
             });
         }
+        "bitwise_mirror" => {
+            let url = req_str(&args, "url")?;
+            let out = args.get("out").and_then(|v| v.as_str()).map(|s| s.to_string());
+            return Ok(match cmd_mirror(&url, out.as_deref()) {
+                Ok(s) => text_content(s),
+                Err(e) => error_content(e),
+            });
+        }
         _ => {
             // herramientas de binario: requieren "file"
             let file = args
@@ -379,6 +396,51 @@ fn cmd_web(url: &str, deep: bool) -> Result<String, String> {
     let client = analysis::web::WebClient::new();
     let report = client.analyze(url, deep).map_err(|e| e.to_string())?;
     Ok(analysis::web::format_report(&report))
+}
+
+fn cmd_mirror(url: &str, out: Option<&str>) -> Result<String, String> {
+    use bitwise_core::analysis::mirror;
+
+    let host = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("site");
+    let out_dir = std::path::PathBuf::from(out.unwrap_or(&format!("mirror-{}", host)));
+
+    let stats = mirror::mirror(url, &out_dir).map_err(|e| e.to_string())?;
+
+    let mut out = format!(
+        "dir: {}\npáginas: {}\nassets: {} ({} KB)\nbundles JS: {}\nendpoints: {}\n",
+        out_dir.display(),
+        stats.pages,
+        stats.assets,
+        stats.bytes / 1024,
+        stats.js_bundles,
+        stats.endpoints_found
+    );
+
+    for (file, eps) in stats.endpoints.iter().take(10) {
+        out.push_str(&format!("  {}:\n", file));
+        for e in eps.iter().take(10) {
+            out.push_str(&format!("    {}\n", e));
+        }
+    }
+    if !stats.secrets.is_empty() {
+        out.push_str(&format!("secrets: {}\n", stats.secrets.len()));
+        for s in stats.secrets.iter().take(10) {
+            out.push_str(&format!("  {}\n", s));
+        }
+    }
+
+    // persistir el reporte junto al mirror
+    let report_path = out_dir.join("bitwise-report.json");
+    if let Ok(json) = serde_json::to_string_pretty(&stats) {
+        let _ = std::fs::write(&report_path, json);
+        out.push_str(&format!("reporte: {}\n", report_path.display()));
+    }
+    Ok(out)
 }
 
 fn cmd_webdyn(
