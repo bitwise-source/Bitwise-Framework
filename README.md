@@ -175,7 +175,8 @@ bitwise/
 - [x] Detección de funciones por call-graph (binarios stripped)
 - [x] DWARF debug info (nombres de funciones de binarios -g)
 - [x] TUI interactiva: vista funciones, renombrado (r) y decompilado (d) integrados
-- [x] CI multi-plataforma + releases automáticos (GitHub Actions) 
+- [x] CI multi-plataforma + releases automáticos (GitHub Actions)
+- [x] Recon de páginas web: endpoints, secrets, stack, formularios (`bitwise web`)
 
 ## 🤝 Contribuir
 

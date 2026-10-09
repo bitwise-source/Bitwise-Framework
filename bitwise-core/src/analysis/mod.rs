@@ -6,6 +6,7 @@ pub mod annotations;
 pub mod cpp;
 pub mod signatures;
 pub mod dwarf;
+pub mod web;
 
 use crate::arch::Instruction;
 use std::collections::{BTreeMap, BTreeSet};

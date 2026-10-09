@@ -198,7 +198,15 @@ enum Commands {
                 #[arg(short, long)]
                 signatures: Option<PathBuf>,
             },
-        }
+            /// Ingeniería inversa de páginas web (recon estático)
+            Web {
+                /// URL a analizar (https://...)
+                url: String,
+                /// Descargar y analizar también los scripts externos
+                #[arg(short, long)]
+                deep: bool,
+            },
+            }
 
 fn main() {
     let cli = Cli::parse();
@@ -267,6 +275,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         } => cmd_annotate(&file, &funcs, &vars, &comments, show),
         Commands::Demangle { file, vtables } => cmd_demangle(&file, vtables),
         Commands::Identify { file, signatures } => cmd_identify(&file, signatures.as_deref()),
+        Commands::Web { url, deep } => cmd_web(&url, deep),
     }
 }
 
@@ -1054,6 +1063,23 @@ fn cmd_identify(
         println!("  ... {} more", hits.len() - 100);
     }
 
+    Ok(())
+}
+
+fn cmd_web(url: &str, deep: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use bitwise_core::analysis::web::WebClient;
+
+    println!("{} {}", "Analizando:".cyan().bold(), url);
+    if deep {
+        println!("{}", "  (modo deep: descargando scripts externos)".dimmed());
+    }
+
+    let client = WebClient::new();
+    let report = client
+        .analyze(url, deep)
+        .map_err(|e| format!("no se pudo analizar: {}", e))?;
+
+    print!("{}", bitwise_core::analysis::web::format_report(&report));
     Ok(())
 }
 
