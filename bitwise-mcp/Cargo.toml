@@ -14,5 +14,6 @@ bitwise-disasm = { path = "../bitwise-disasm" }
 bitwise-ir = { path = "../bitwise-ir" }
 bitwise-lift = { path = "../bitwise-lift" }
 bitwise-decomp = { path = "../bitwise-decomp" }
+bitwise-emu = { path = "../bitwise-emu" }
 serde_json.workspace = true
 serde.workspace = true
