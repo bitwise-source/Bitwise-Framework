@@ -395,10 +395,24 @@ pub fn detect_secrets(js: &str) -> Vec<SecretFinding> {
         ("twilio_key", r"SK[0-9a-fA-F]{32}"),
     ];
     for (kind, pat) in patterns {
-        // regex-lite: búsqueda simple por prefijos sin motor regex completo
-        for (idx, _) in js.match_indices(pat.split('[').next().unwrap_or(pat)) {
-            let ctx_start = idx.saturating_sub(40);
-            let ctx_end = (idx + 120).min(js.len());
+        // regex-lite: búsqueda simple por prefijos sin motor regex completo.
+        // Patrones que arrancan con '[' (ej. firebase) quedan sin prefijo
+        // literal → matchean en cada posición; no se pueden buscar sin regex.
+        let prefix = pat.split('[').next().unwrap_or(pat);
+        if prefix.is_empty() {
+            continue;
+        }
+        for (idx, _) in js.match_indices(prefix) {
+            // el JS puede tener UTF-8 multibyte: alinear a fronteras de char
+            // antes de slicear, si no panic ("not a char boundary").
+            let mut ctx_start = idx.saturating_sub(40);
+            while !js.is_char_boundary(ctx_start) {
+                ctx_start += 1;
+            }
+            let mut ctx_end = (idx + 120).min(js.len());
+            while !js.is_char_boundary(ctx_end) {
+                ctx_end += 1;
+            }
             let context: String = js[ctx_start..ctx_end].chars().filter(|c| c.is_ascii_graphic() || *c == ' ').collect();
             let value: String = js[idx..ctx_end]
                 .chars()
