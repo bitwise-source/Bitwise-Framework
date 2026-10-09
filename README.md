@@ -257,7 +257,8 @@ eval 0x1000 + 0x10
 bitwise/
 ├── bitwise-core/       # Tipos, parsers (ELF/PE/Mach-O), análisis (CFG, call-graph,
 │                       #   xrefs, strings, DWARF, demangling, firmas, annotations,
-│                       #   packers, recon web, JS deobfuscator)
+│                       #   packers, recon web, JS deobfuscator,
+│                       #   web dinámico CDP, mirror + túnel)
 ├── bitwise-disasm/     # Motor de desensamblado (Capstone, 7 arquitecturas)
 ├── bitwise-ir/         # IR propio: Varnodes + P-Code ops
 ├── bitwise-lift/       # Lifters x86-64 / AArch64 → IR
