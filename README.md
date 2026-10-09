@@ -40,11 +40,13 @@ decompila a pseudo-C, debuggea, emula, y deobfusca JavaScript.
 | 🛡️ **Packers** | Detección UPX/ASPack/MPRESS + entropía + parcheo de binarios |
 | 🖥️ **TUI** | Interactiva: navega funciones, decompila (`d`), renombra (`r`) |
 | 🐚 **Scripting** | Lenguaje `.bws` embebido para automatizar análisis |
-| 🤖 **MCP Server** | Expón Bitwise a agentes de IA (Claude, Cursor) vía 8 herramientas |
+| 🤖 **MCP Server** | Expón Bitwise a agentes de IA (Claude, Cursor) vía 18 herramientas |
 
 ## 🤖 MCP Server (integración con agentes de IA)
 
-Bitwise se expone vía [Model Context Protocol](https://modelcontextprotocol.io/) para que agentes como Claude o Cursor lo usen directamente. El servidor `bitwise-mcp` corre sobre stdio (JSON-RPC newline-delimited) y ofrece **8 herramientas**:
+Bitwise se expone vía [Model Context Protocol](https://modelcontextprotocol.io/) para que agentes como Claude o Cursor lo usen directamente. El servidor `bitwise-mcp` corre sobre stdio (JSON-RPC newline-delimited) y ofrece **18 herramientas**:
+
+### Binarios
 
 | Tool | Qué hace |
 |---|---|
@@ -56,6 +58,21 @@ Bitwise se expone vía [Model Context Protocol](https://modelcontextprotocol.io/
 | `bitwise_xrefs` | Xrefs hacia una dirección |
 | `bitwise_decompile` | Pseudo-C de funciones |
 | `bitwise_analyze` | Detección de funciones + bloques básicos |
+| `bitwise_hexdump` | Hex dump del archivo o de una sección |
+| `bitwise_packer` | Detección de packers (UPX, ASPack, MPRESS) + entropía |
+| `bitwise_identify` | Identifica funciones contra firmas FLIRT-like (libc o custom) |
+| `bitwise_demangle` | Demanglea símbolos C++ y detecta vtables |
+| `bitwise_emu` | Emula una función x86-64 sin ejecutar el binario |
+| `bitwise_diff` | Compara dos binarios (secciones + símbolos) |
+| `bitwise_annotate` | Renombra funciones / comenta direcciones (persiste `.bitwise.json`) |
+
+### Web / JavaScript
+
+| Tool | Qué hace |
+|---|---|
+| `bitwise_web` | Recon estático: endpoints, secrets, stack, formularios |
+| `bitwise_webdyn` | Render headless vía CDP: requests XHR/Fetch, DOM post-JS, ejecuta JS (`js`), screenshots (`screenshot`) |
+| `bitwise_js` | Deobfuscador JS: beautify, renombrado `_0x` → `vN`, score de ofuscación |
 
 **Configuración para Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
