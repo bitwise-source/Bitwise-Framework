@@ -234,6 +234,20 @@ enum Commands {
                 #[arg(short = 's', long)]
                 screenshot: Option<String>,
             },
+            /// Clona un sitio (HTML+assets), le hace ingeniería inversa y lo sirve con túnel temporal
+            Mirror {
+                /// URL a clonar
+                url: String,
+                /// Directorio de salida (default: ./mirror-<host>)
+                #[arg(short = 'o', long)]
+                out: Option<String>,
+                /// Puerto local del servidor (default: efímero)
+                #[arg(short = 'p', long)]
+                port: Option<u16>,
+                /// No abrir túnel público, solo servir local
+                #[arg(short = 'l', long)]
+                local_only: bool,
+            },
             }
 
 fn main() {
@@ -308,6 +322,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cmd_js(&input, stats, beautify_only, sourcemaps)
         }
         Commands::WebDyn { url, wait_ms, js, screenshot } => cmd_webdyn(&url, wait_ms, js.as_deref(), screenshot.as_deref()),
+        Commands::Mirror { url, out, port, local_only } => cmd_mirror(&url, out.as_deref(), port, local_only),
     }
 }
 
@@ -1219,6 +1234,101 @@ fn cmd_webdyn(
         println!("{} {} ({} bytes)", "Screenshot:".cyan().bold(), path, png.len());
     }
 
+    Ok(())
+}
+
+fn cmd_mirror(
+    url: &str,
+    out: Option<&str>,
+    port: Option<u16>,
+    local_only: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use bitwise_core::analysis::mirror;
+
+    println!("{} {}", "Mirroring:".cyan().bold(), url);
+
+    // directorio de salida
+    let host = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("site");
+    let out_dir = std::path::PathBuf::from(out.unwrap_or(&format!("mirror-{}", host)));
+
+    let stats = mirror::mirror(url, &out_dir).map_err(|e| e.to_string())?;
+
+    println!("  página:   {}", stats.pages);
+    println!("  assets:   {} ({} KB)", stats.assets, stats.bytes / 1024);
+    println!("  bundles JS: {}", stats.js_bundles);
+    println!("  dir:      {}", out_dir.display());
+
+    // reporte de ingeniería inversa
+    println!("\n{} ", "── Ingeniería inversa ──".cyan().bold());
+    println!("  endpoints: {}", stats.endpoints_found);
+    for (file, eps) in stats.endpoints.iter().take(5) {
+        println!("    {}:", file);
+        for e in eps.iter().take(10) {
+            println!("      {}", e);
+        }
+    }
+    if !stats.secrets.is_empty() {
+        println!("  ⚠ secrets: {}", stats.secrets.len());
+        for s in stats.secrets.iter().take(10) {
+            println!("    {}", s);
+        }
+    }
+
+    // reporte guardado a archivo
+    let report_path = out_dir.join("bitwise-report.json");
+    std::fs::write(&report_path, serde_json::to_string_pretty(&stats)?)?;
+    println!("\n  reporte:  {}", report_path.display());
+
+    // servidor local
+    let port = port.unwrap_or_else(|| {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .map(|a| a.port())
+            .unwrap_or(8080)
+    });
+
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    let server_dir = out_dir.clone();
+    let server = std::thread::spawn(move || {
+        let _ = mirror::serve_blocking(&server_dir, port, stop_rx);
+    });
+
+    println!("\n{} http://127.0.0.1:{}", "Local:".green().bold(), port);
+
+    // túnel público
+    let mut tunnel_child = None;
+    if !local_only {
+        match mirror::open_tunnel(port) {
+            Ok((child, tunnel_url)) => {
+                println!("{} {}  (Ctrl+C para cerrar)", "Túnel:".green().bold(), tunnel_url);
+                tunnel_child = Some(child);
+            }
+            Err(e) => println!("{} no se pudo abrir el túnel: {} (--local para saltarlo)", "⚠".yellow(), e),
+        }
+    }
+
+    println!("\nCtrl+C para terminar.");
+    // bloquear hasta EOF/Ctrl+C en stdin; en entornos headless (no-tty)
+    // stdin da EOF inmediato, así que parqueamos y solo salimos por señal.
+    if atty::is(atty::Stream::Stdin) {
+        use std::io::Read;
+        let _ = std::io::stdin().read(&mut [0u8]);
+    } else {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
+
+    let _ = stop_tx.send(());
+    if let Some(mut c) = tunnel_child {
+        let _ = c.kill();
+    }
+    let _ = server.join();
     Ok(())
 }
 

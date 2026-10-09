@@ -185,6 +185,27 @@ Requiere Chrome/Chromium instalado (`chromium`, `google-chrome` o
 `chrome-headless-shell` en PATH). Corriendo como root agrega `--no-sandbox`
 automáticamente.
 
+### 🪞 Mirror + túnel temporal
+
+Clona un sitio completo (HTML + todos sus assets: bundles React/Vue, CSS,
+imágenes), le hace ingeniería inversa (endpoints, secrets, bundles) y sirve
+la copia local con un túnel público temporal para entrar desde cualquier lado.
+
+```bash
+# Mirror completo + servidor local + túnel público
+bitwise mirror https://ejemplo.com
+
+# Solo servidor local (sin túnel), directorio custom
+bitwise mirror https://ejemplo.com -o midir --local
+
+# Puerto local fijo
+bitwise mirror https://ejemplo.com -p 8080
+```
+
+Salida: reporte de ingeniería inversa en pantalla + `bitwise-report.json`,
+URL local (`http://127.0.0.1:<puerto>`) y URL pública temporal (pinggy).
+Túnel anónimo con TTL limitado — para uso serio, token de pinggy/cloudflare.
+
 
 ### 🔓 Deobfuscar JavaScript
 
@@ -271,6 +292,7 @@ bitwise/
 - [x] Decompilador interactivo: re-tipeo de variables desde la TUI (tecla `t`)
 - [x] Lifter AArch64: mul/div, lógica (orr/eor/mvn), ldr/str, br/blr, svc
 - [x] Análisis dinámico avanzado (ejecutar JS arbitrario y screenshots vía CDP)
+- [x] Mirror: clona sitio + assets, ingeniería inversa y túnel temporal (`bitwise mirror`)
 
 ## 🤝 Contribuir
 

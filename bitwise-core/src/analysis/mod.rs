@@ -9,6 +9,7 @@ pub mod dwarf;
 pub mod web;
 pub mod js_deobf;
 pub mod web_dynamic;
+pub mod mirror;
 
 use crate::arch::Instruction;
 use std::collections::{BTreeMap, BTreeSet};

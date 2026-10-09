@@ -32,6 +32,7 @@ bitwise-script = { path = "../bitwise-script" }
 bitwise-emu = { path = "../bitwise-emu" }
 clap = { version = "4", features = ["derive"] }
 colored = "2"
+atty = "0.2"
 serde_json.workspace = true
 thiserror.workspace = true
 ureq = "2"
