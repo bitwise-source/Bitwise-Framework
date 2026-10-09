@@ -9,10 +9,11 @@
 [![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/Platforms-Linux%20%7C%20Windows%20%7C%20macOS-green)](#)
-[![Version](https://img.shields.io/badge/version-0.1.0-purple)](#)
+[![Version](https://img.shields.io/badge/version-0.6.0-purple)](#)
+[![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions)](../../actions)
 
-Analiza binarios **ELF** · **PE** · **Mach-O** — desensambla, construye IR propio,
-decompila a pseudo-C, debuggea con breakpoints, y automatiza con scripting.
+Analiza **binarios** (ELF · PE · Mach-O) y **páginas web** — desensambla,
+decompila a pseudo-C, debuggea, emula, y deobfusca JavaScript.
 
 [Instalación](#-instalación) · [Uso](#-uso-rápido) · [Arquitectura](#️-arquitectura) · [Roadmap](#️-roadmap)
 
@@ -27,14 +28,19 @@ decompila a pseudo-C, debuggea con breakpoints, y automatiza con scripting.
 | Área | Qué hace |
 |---|---|
 | 📦 **Parsers** | ELF (32/64-bit, LE/BE) · PE (PE32/PE32+) · Mach-O (thin + FAT) |
-| 🔧 **Desensamblado** | x86 · x86-64 · ARM32 · AArch64 (Capstone, sintaxis Intel) |
+| 🔧 **Desensamblado** | x86 · x86-64 · ARM32 · AArch64 · MIPS · PowerPC · RISC-V |
 | 🧬 **IR propio** | Varnodes + 30 ops P-Code (estilo SLEIGH simplificado) |
-| 📝 **Decompilador** | IR → pseudo-C legible con variables nombradas |
+| 📝 **Decompilador** | IR → pseudo-C con structuring, type recovery y optimizer |
+| 🔍 **Análisis** | Call-graph, CFG, xrefs, strings, DWARF, demangling C++, vtables |
+| 🏷️ **Firmas** | Genera y matchea firmas FLIRT-like de funciones conocidas |
 | 🐛 **Debugger** | ptrace nativo: breakpoints INT3, registros, memoria, single-step |
-| 🖥️ **TUI** | Interfaz interactiva: disasm/symbols/sections, búsqueda, hexdump |
+| ⚡ **Emulador** | Interpreter x86-64 puro — descifra strings y checks sin ejecutar |
+| 🌐 **Recon web** | Endpoints, secrets filtrados, stack, formularios de páginas web |
+| 🔓 **JS deobfuscator** | Beautify, renombrado de `_0x..`, decodificación `\xNN`, sourcemaps |
+| 🛡️ **Packers** | Detección UPX/ASPack/MPRESS + entropía + parcheo de binarios |
+| 🖥️ **TUI** | Interactiva: navega funciones, decompila (`d`), renombra (`r`) |
 | 🐚 **Scripting** | Lenguaje `.bws` embebido para automatizar análisis |
 | 🤖 **MCP Server** | Expón Bitwise a agentes de IA (Claude, Cursor) vía 8 herramientas |
-| 🔍 **Análisis** | Detección de funciones, CFG, xrefs, strings, diff de binarios |
 
 ## 🤖 MCP Server (integración con agentes de IA)
 
@@ -88,7 +94,7 @@ bitwise info /bin/ls
 # Desensamblar .text con bytes
 bitwise disasm /bin/ls -s .text -n 30 -b
 
-# Decompilar funciones a pseudo-C
+# Decompilar funciones a pseudo-C (usa renombres del proyecto)
 bitwise decompile /bin/ls -n 3
 
 # Ver el IR (P-Code)
@@ -99,20 +105,60 @@ bitwise strings /bin/ls -n 8 -g "GNU"
 bitwise xrefs /bin/ls 0x4970
 bitwise hexdump /bin/ls -s .text -n 16
 
-# Detección de funciones + bloques básicos
+# Detección de funciones (call-graph: funciona en stripped)
 bitwise analyze /bin/ls --blocks
 
-# Interfaz interactiva
+# Interfaz interactiva: [5] funciones · [d] decompilar · [r] renombrar
 bitwise tui /bin/ls
 
 # Debugger con breakpoint en entry point
 bitwise debug /bin/ls
 
-# Automatización con scripts
-bitwise script analisis.bws
+# Emular una función (sin ejecutar el binario)
+bitwise emu /bin/ls -f 0x4da4 -n 100
 
-# Comparar dos versiones de un binario
-bitwise diff ./app_v1 ./app_v2
+# Renombrar funciones/variables (persiste en .bitwise.json)
+bitwise annotate /bin/ls --funcs 0x4da4 main
+
+# Identificar funciones con firmas generadas de libc
+bitwise-siggen /lib/x86_64-linux-gnu/libc.so.6 libc_sigs.json
+bitwise identify /bin/ls --signatures libc_sigs.json
+
+# Demangling C++ y vtables
+bitwise demangle ./app --vtables
+
+# Detección de packers + parcheo con backup
+bitwise packer ./malware.exe
+bitwise patch ./crackme --at 0x401000 --with 9090 --backup
+
+# Exportar CFG a Graphviz
+bitwise cfg-dot /bin/ls -f 0x4da4 > cfg.dot && dot -Tpng cfg.dot -o cfg.png
+```
+
+### 🌐 Recon web
+
+```bash
+# Analizar una página (endpoints, secrets, stack, formularios)
+bitwise web https://ejemplo.com
+
+# Descargar y analizar también los JS externos
+bitwise web https://ejemplo.com --deep
+```
+
+### 🔓 Deobfuscar JavaScript
+
+```bash
+# Deobfuscado completo: renombra _0x4f2a → v5, decodifica '\x48\x65...' → 'Hello'
+bitwise js script_ofuscado.js
+
+# Solo métricas y score de ofuscación
+bitwise js script.js --stats
+
+# Solo beautify (sin renombrar)
+bitwise js script.js -B
+
+# Desde URL + buscar sourcemaps públicos
+bitwise js https://sitio.com/app.js -m
 ```
 
 ### Ejemplo: salida de `decompile`
@@ -146,37 +192,43 @@ eval 0x1000 + 0x10
 
 ```
 bitwise/
-├── bitwise-core/       # Tipos, parsers (ELF, PE, Mach-O), análisis (CFG, xrefs, strings)
-├── bitwise-disasm/     # Motor de desensamblado (Capstone wrapper)
+├── bitwise-core/       # Tipos, parsers (ELF/PE/Mach-O), análisis (CFG, call-graph,
+│                       #   xrefs, strings, DWARF, demangling, firmas, annotations,
+│                       #   packers, recon web, JS deobfuscator)
+├── bitwise-disasm/     # Motor de desensamblado (Capstone, 7 arquitecturas)
 ├── bitwise-ir/         # IR propio: Varnodes + P-Code ops
-├── bitwise-lift/       # Lifter x86-64 → IR
-├── bitwise-decomp/     # Decompilador IR → pseudo-C
-├── bitwise-debug/      # Debugger ptrace (Linux) con breakpoints INT3
-├── bitwise-tui/        # TUI interactiva (crossterm) + hexdump
-├── bitwise-script/     # Motor de scripting .bws (parser + intérprete)
-└── bitwise-cli/        # CLI (clap) — binario `bitwise`
+├── bitwise-lift/       # Lifters x86-64 / AArch64 → IR
+├── bitwise-decomp/     # Decompilador: optimizer + type recovery + structuring
+├── bitwise-debug/      # Debugger multi-OS (ptrace funcional, Win/Mac skeleton)
+├── bitwise-emu/        # Emulador x86-64 interpreter puro
+├── bitwise-tui/        # TUI interactiva + hexdump + export Graphviz
+├── bitwise-script/     # Motor de scripting .bws
+├── bitwise-mcp/        # Servidor MCP (agentes de IA)
+└── bitwise-cli/        # CLI — binario `bitwise` + hardening/siggen/stress
 ```
 
 ## 🗺️ Roadmap
 
 - [x] Parsers ELF / PE / Mach-O
-- [x] Desensamblado multi-arquitectura
-- [x] IR propio (P-Code)
-- [x] Decompilador a pseudo-C
-- [x] Debugger con breakpoints (Linux)
-- [x] TUI interactiva
-- [x] Scripting embebido
-- [x] Structuring de control flow (if/else/while/do-while con dominadores)
-- [x] Type recovery (uint8/16/32/64, int, void*, float, signed/unsigned)
-- [x] Lifter AArch64 (stp/ldp/adrp/cbz/b.cond)
-- [x] Desensamblado RISC-V / MIPS / PowerPC
-- [x] Debugger backends skeleton: Windows (Debug API) y macOS (Mach exceptions)
-- [x] Base de datos de firmas de funciones
+- [x] Desensamblado multi-arquitectura (x86/x64/ARM/AArch64/MIPS/PPC/RISC-V)
+- [x] IR propio (P-Code) + lifter x86-64 y AArch64
+- [x] Decompilador a pseudo-C con structuring, type recovery y optimizer
+- [x] Debugger con breakpoints (Linux) + backends Windows/macOS (skeleton)
+- [x] Emulador x86-64 (interpreter puro)
+- [x] TUI interactiva: vistas, búsqueda, renombrado (`r`) y decompilado (`d`)
+- [x] Scripting embebido (.bws)
+- [x] Sistema de firmas FLIRT-like: `siggen` genera, `identify` matchea
 - [x] Detección de funciones por call-graph (binarios stripped)
-- [x] DWARF debug info (nombres de funciones de binarios -g)
-- [x] TUI interactiva: vista funciones, renombrado (r) y decompilado (d) integrados
+- [x] DWARF debug info + demangling C++ + vtables
+- [x] Annotations persistentes (`.bitwise.json`, compartidas CLI/TUI/MCP)
+- [x] Detección de packers + parcheo de binarios
 - [x] CI multi-plataforma + releases automáticos (GitHub Actions)
-- [x] Recon de páginas web: endpoints, secrets, stack, formularios (`bitwise web`)
+- [x] Recon de páginas web: endpoints, secrets, stack, formularios
+- [x] JS deobfuscator: beautify, renombrado, decodificación, sourcemaps
+- [x] MCP Server (8 herramientas)
+- [ ] Análisis dinámico web (navegador headless vía CDP)
+- [ ] Lifter AArch64 completo (SIMD, mul/div)
+- [ ] Decompilador interactivo completo (re-tipeo desde la TUI)
 
 ## 🤝 Contribuir
 
