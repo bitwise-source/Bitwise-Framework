@@ -265,7 +265,9 @@ fn parse_thin(data: &[u8], path: &Path, is_le: bool, is_64: bool) -> Result<Bina
                         (addr, size, offset)
                     };
 
-                    let flags = read_u32(sec_off + if cmd == LC_SEGMENT_64 { 56 } else { 44 });
+                    // flags: 56 en 32-bit (16+16+6*4) / 64 en 64-bit (16+16+8*2+4)
+                    // flags: 56 en 32-bit (16+16+6*4) / 64 en 64-bit (16+16+8*2+4)
+                    let flags = read_u32(sec_off + if cmd == LC_SEGMENT_64 { 64 } else { 56 });
 
                     let is_exec = (flags & S_ATTR_PURE_INSTRUCTIONS) != 0;
 

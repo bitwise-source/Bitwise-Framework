@@ -43,7 +43,7 @@ impl Disassembler {
                 .build()?,
             Architecture::ARM => Capstone::new()
                 .arm()
-                .mode(arch::arm::ArchMode::Arm)
+                .mode(arch::arm::ArchMode::Thumb)
                 .detail(true)
                 .build()?,
             Architecture::AArch64 => Capstone::new()
