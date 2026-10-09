@@ -121,11 +121,22 @@ cargo build --release
 ok "compilación exitosa"
 
 # ----------------------------------------------------------------------------
-# 5. Verificación final + PATH
+# 5. Verificación final + instalación del binario
 # ----------------------------------------------------------------------------
 BIN="./target/release/bitwise"
 if [ -x "$BIN" ]; then
-    # binario disponible en el PATH del usuario (idempotente)
+    # Option A: copiar a /usr/local/bin (disponible para todos los usuarios)
+    if [ -w /usr/local/bin ]; then
+        cp -f "$BIN" /usr/local/bin/bitwise && ok "instalado en /usr/local/bin/bitwise"
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo cp -f "$BIN" /usr/local/bin/bitwise && ok "instalado en /usr/local/bin/bitwise"
+    else
+        sudo cp -f "$BIN" /usr/local/bin/bitwise 2>/dev/null \
+            && ok "instalado en /usr/local/bin/bitwise" \
+            || warn "no se pudo escribir /usr/local/bin (sin sudo) — usando PATH (Option B)"
+    fi
+
+    # Option B: directorio release en el PATH del usuario (idempotente)
     BIN_DIR="$(cd ./target/release && pwd)"
     case ":$PATH:" in
         *":$BIN_DIR:"*) : ;; # ya está
