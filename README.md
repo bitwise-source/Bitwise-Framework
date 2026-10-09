@@ -145,6 +145,30 @@ bitwise web https://ejemplo.com
 bitwise web https://ejemplo.com --deep
 ```
 
+### 🎭 Análisis dinámico (CDP)
+
+Renderiza la página con un navegador headless real: captura requests XHR/Fetch
+invisibles al análisis estático, el DOM post-JS, y ejecuta JS arbitrario.
+
+```bash
+# Render + reporte (endpoints dinámicos, scripts, errores de consola)
+bitwise web-dyn https://ejemplo.com
+
+# Ejecutar JS arbitrario en la página renderizada
+bitwise web-dyn https://ejemplo.com --js "document.querySelectorAll('a').length"
+
+# Screenshot PNG de la página renderizada
+bitwise web-dyn https://ejemplo.com --screenshot out.png
+
+# Ambos + tiempo de espera custom (SPA lentas)
+bitwise web-dyn https://ejemplo.com -w 5000 -j "localStorage.getItem('token')" -s shot.png
+```
+
+Requiere Chrome/Chromium instalado (`chromium`, `google-chrome` o
+`chrome-headless-shell` en PATH). Corriendo como root agrega `--no-sandbox`
+automáticamente.
+
+
 ### 🔓 Deobfuscar JavaScript
 
 ```bash
@@ -226,10 +250,10 @@ bitwise/
 - [x] Recon de páginas web: endpoints, secrets, stack, formularios
 - [x] JS deobfuscator: beautify, renombrado, decodificación, sourcemaps
 - [x] MCP Server (8 herramientas)
-- [x] Análisis dinámico web (navegador headless vía CDP — `bitwise webdyn`)
+- [x] Análisis dinámico web (navegador headless vía CDP — `bitwise web-dyn`)
 - [x] Decompilador interactivo: re-tipeo de variables desde la TUI (tecla `t`)
 - [x] Lifter AArch64: mul/div, lógica (orr/eor/mvn), ldr/str, br/blr, svc
-- [ ] Análisis dinámico avanzado (ejecutar JS arbitrario y screenshots vía CDP)
+- [x] Análisis dinámico avanzado (ejecutar JS arbitrario y screenshots vía CDP)
 
 ## 🤝 Contribuir
 
