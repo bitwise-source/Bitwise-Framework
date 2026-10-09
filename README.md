@@ -249,7 +249,7 @@ bitwise/
 - [x] CI multi-plataforma + releases automáticos (GitHub Actions)
 - [x] Recon de páginas web: endpoints, secrets, stack, formularios
 - [x] JS deobfuscator: beautify, renombrado, decodificación, sourcemaps
-- [x] MCP Server (8 herramientas)
+- [x] MCP Server (11 herramientas: binarios + web/webdyn/js)
 - [x] Análisis dinámico web (navegador headless vía CDP — `bitwise web-dyn`)
 - [x] Decompilador interactivo: re-tipeo de variables desde la TUI (tecla `t`)
 - [x] Lifter AArch64: mul/div, lógica (orr/eor/mvn), ldr/str, br/blr, svc

@@ -55,13 +55,17 @@ fn handle_initialize() -> serde_json::Value {
 }
 
 fn tool_def(name: &str, desc: &str, params: serde_json::Value) -> serde_json::Value {
+    tool_def_req(name, desc, params, &["file"])
+}
+
+fn tool_def_req(name: &str, desc: &str, params: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({
         "name": name,
         "description": desc,
         "inputSchema": {
             "type": "object",
             "properties": params,
-            "required": ["file"]
+            "required": required
         }
     })
 }
@@ -134,6 +138,36 @@ fn handle_tools_list() -> serde_json::Value {
                 "file": {"type": "string", "description": "Ruta al binario"}
             }),
         ),
+        tool_def_req(
+            "bitwise_web",
+            "Recon estático de una página web: endpoints, secretos filtrados (API keys, tokens), stack tecnológico y formularios",
+            serde_json::json!({
+                "url": {"type": "string", "description": "URL a analizar"},
+                "deep": {"type": "boolean", "description": "Descargar y analizar también los JS externos (default false)"}
+            }),
+            &["url"],
+        ),
+        tool_def_req(
+            "bitwise_webdyn",
+            "Análisis dinámico web con navegador headless vía CDP: captura requests XHR/Fetch invisibles al análisis estático, el DOM post-JS, ejecuta JS arbitrario y saca screenshots",
+            serde_json::json!({
+                "url": {"type": "string", "description": "URL a renderizar"},
+                "wait_ms": {"type": "integer", "description": "Espera tras la carga en ms (default 3000)"},
+                "js": {"type": "string", "description": "JavaScript a evaluar en la página renderizada; imprime el resultado"},
+                "screenshot": {"type": "string", "description": "Ruta donde guardar el screenshot PNG de la página renderizada"}
+            }),
+            &["url"],
+        ),
+        tool_def_req(
+            "bitwise_js",
+            "Deobfuscador JavaScript: beautify, renombra variables ofuscadas (_0x4f2a → v5), decodifica escapes \\xNN y busca sourcemaps",
+            serde_json::json!({
+                "input": {"type": "string", "description": "Ruta al .js o URL"},
+                "stats": {"type": "boolean", "description": "Solo métricas y score de ofuscación (default false)"},
+                "beautify_only": {"type": "boolean", "description": "Solo beautify sin renombrar (default false)"}
+            }),
+            &["input"],
+        ),
     ];
 
     serde_json::json!({ "tools": tools })
@@ -158,15 +192,65 @@ fn handle_tools_call(params: Option<&serde_json::Value>) -> Result<serde_json::V
     let name = params
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or((serde_json::Value::from(-32602), "missing tool name".into()))?;
+        .ok_or((serde_json::Value::from(-32602), "missing tool name".into()))?
+        .to_string();
     let args = params.get("arguments").cloned().unwrap_or(serde_json::json!({}));
 
-    let file = args
-        .get("file")
-        .and_then(|f| f.as_str())
-        .ok_or((serde_json::Value::from(-32602), "missing required argument: file".into()))?
-        .to_string();
+    // Herramientas web: no requieren "file"
+    let out = match name.as_str() {
+        "bitwise_web" => {
+            let url = req_str(&args, "url")?;
+            return Ok(match cmd_web(&url, args.get("deep").and_then(|v| v.as_bool()).unwrap_or(false)) {
+                Ok(s) => text_content(s),
+                Err(e) => error_content(e),
+            });
+        }
+        "bitwise_webdyn" => {
+            let url = req_str(&args, "url")?;
+            let wait_ms = args.get("wait_ms").and_then(|v| v.as_u64()).unwrap_or(3000);
+            let js = args.get("js").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let screenshot = args.get("screenshot").and_then(|v| v.as_str()).map(|s| s.to_string());
+            return Ok(match cmd_webdyn(&url, wait_ms, js.as_deref(), screenshot.as_deref()) {
+                Ok(s) => text_content(s),
+                Err(e) => error_content(e),
+            });
+        }
+        "bitwise_js" => {
+            let input = req_str(&args, "input")?;
+            return Ok(match cmd_js(&input, args.get("stats").and_then(|v| v.as_bool()).unwrap_or(false), args.get("beautify_only").and_then(|v| v.as_bool()).unwrap_or(false)) {
+                Ok(s) => text_content(s),
+                Err(e) => error_content(e),
+            });
+        }
+        _ => {
+            // herramientas de binario: requieren "file"
+            let file = args
+                .get("file")
+                .and_then(|f| f.as_str())
+                .ok_or((serde_json::Value::from(-32602), "missing required argument: file".into()))?
+                .to_string();
+            handle_binary_tool(&name, &file, &args)?
+        }
+    };
 
+    match out {
+        Ok(s) => Ok(text_content(s)),
+        Err(e) => Ok(error_content(e)),
+    }
+}
+
+fn req_str(args: &serde_json::Value, key: &str) -> Result<String, (serde_json::Value, String)> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or((serde_json::Value::from(-32602), format!("missing required argument: {}", key)))
+}
+
+fn handle_binary_tool(
+    name: &str,
+    file: &str,
+    args: &serde_json::Value,
+) -> Result<Result<String, String>, (serde_json::Value, String)> {
     let out = match name {
         "bitwise_info" => cmd_info(&file),
         "bitwise_sections" => cmd_sections(&file, args.get("exec_only").and_then(|v| v.as_bool()).unwrap_or(false)),
@@ -195,13 +279,68 @@ fn handle_tools_call(params: Option<&serde_json::Value>) -> Result<serde_json::V
             args.get("max_functions").and_then(|v| v.as_u64()).unwrap_or(1) as usize,
         ),
         "bitwise_analyze" => cmd_analyze(&file),
-        other => return Ok(error_content(format!("unknown tool: {}", other))),
+        other => Err(format!("unknown tool: {}", other)),
     };
 
-    match out {
-        Ok(s) => Ok(text_content(s)),
-        Err(e) => Ok(error_content(e)),
+    Ok(out)
+}
+
+// ============================================================================
+// Herramientas web
+// ============================================================================
+
+fn cmd_web(url: &str, deep: bool) -> Result<String, String> {
+    let client = analysis::web::WebClient::new();
+    let report = client.analyze(url, deep).map_err(|e| e.to_string())?;
+    Ok(analysis::web::format_report(&report))
+}
+
+fn cmd_webdyn(
+    url: &str,
+    wait_ms: u64,
+    js: Option<&str>,
+    screenshot: Option<&str>,
+) -> Result<String, String> {
+    let mut browser = analysis::web_dynamic::HeadlessBrowser::launch().map_err(|e| e.to_string())?;
+    let report = browser.analyze(url, wait_ms).map_err(|e| e.to_string())?;
+    let mut out = analysis::web_dynamic::format_dynamic_report(&report);
+
+    if let Some(expr) = js {
+        let result = browser.evaluate(expr).map_err(|e| e.to_string())?;
+        out.push_str(&format!("\nJS> {}\n  => {}\n", expr, result));
     }
+
+    if let Some(path) = screenshot {
+        let png = browser.screenshot().map_err(|e| e.to_string())?;
+        std::fs::write(path, &png).map_err(|e| format!("escribir {}: {}", path, e))?;
+        out.push_str(&format!("\nscreenshot guardado: {} ({} bytes)\n", path, png.len()));
+    }
+
+    Ok(out)
+}
+
+fn cmd_js(input: &str, stats: bool, beautify_only: bool) -> Result<String, String> {
+    let source = std::fs::read_to_string(input)
+        .map_err(|e| format!("leer {} (en MCP el input es ruta local; para URL usá bitwise_web/webdyn): {}", input, e))?;
+
+    let (st, score) = analysis::js_deobf::analyze_js(&source);
+    let mut out = String::new();
+
+    if stats {
+        out.push_str(&format!(
+            "bytes: {}  líneas: {}\nscore de ofuscación: {:.2}/10\n",
+            st.bytes, st.lines, score
+        ));
+        return Ok(out);
+    }
+
+    out.push_str(&format!("// score de ofuscación: {:.2}/10\n", score));
+    if beautify_only {
+        out.push_str(&analysis::js_deobf::beautify(&source));
+    } else {
+        out.push_str(&analysis::js_deobf::deobfuscate(&source));
+    }
+    Ok(out)
 }
 
 // ============================================================================
