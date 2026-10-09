@@ -106,6 +106,18 @@ fn which(cmd: &str) -> bool {
     false
 }
 
+/// Chrome como root (contenedores/CI) exige --no-sandbox para arrancar.
+fn nix_user_is_root() -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 impl HeadlessBrowser {
     /// Lanza el navegador headless con debugging remoto.
     pub fn launch() -> Result<Self> {
@@ -122,16 +134,25 @@ impl HeadlessBrowser {
         drop(listener);
 
         let user_data_dir = std::env::temp_dir().join(format!("bitwise-cdp-{}", std::process::id()));
+        let mut args: Vec<String> = vec![
+            // "--headless" (viejo) en vez de "=new": chrome-headless-shell
+            // solo soporta el modo clásico y arranca sin él.
+            "--headless".into(),
+            "--disable-gpu".into(),
+            "--no-first-run".into(),
+            "--no-default-browser-check".into(),
+            format!("--remote-debugging-port={}", port),
+            format!("--user-data-dir={}", user_data_dir.display()),
+        ];
+        // corriendo como root (contenedores/CI) Chrome exige --no-sandbox
+        if !nix_user_is_root() {
+            // usuario normal: dejar el sandbox activo (más seguro)
+        } else {
+            args.push("--no-sandbox".into());
+        }
+        args.push("about:blank".into());
         let child = Command::new(&browser)
-            .args([
-                "--headless=new",
-                "--disable-gpu",
-                "--no-first-run",
-                "--no-default-browser-check",
-                &format!("--remote-debugging-port={}", port),
-                &format!("--user-data-dir={}", user_data_dir.display()),
-                "about:blank",
-            ])
+            .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -213,6 +234,8 @@ impl HeadlessBrowser {
         });
         ws.write(Message::Text(msg.to_string().into()))
             .map_err(|e| CdpError::WebSocket(e.to_string()))?;
+        // write() solo bufferea; sin flush el navegador nunca recibe el comando
+        ws.flush().map_err(|e| CdpError::WebSocket(e.to_string()))?;
 
         // buffer de eventos (Network.requestWillBeSent etc.) durante la espera
         let mut events: Vec<serde_json::Value> = Vec::new();

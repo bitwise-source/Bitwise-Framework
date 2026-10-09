@@ -227,6 +227,12 @@ enum Commands {
                 /// Tiempo de espera tras la carga (ms, default 3000)
                 #[arg(short = 'w', long, default_value = "3000")]
                 wait_ms: u64,
+                /// Ejecutar JS arbitrario en la página renderizada (imprime el resultado)
+                #[arg(short = 'j', long)]
+                js: Option<String>,
+                /// Guardar screenshot PNG de la página renderizada
+                #[arg(short = 's', long)]
+                screenshot: Option<String>,
             },
             }
 
@@ -301,7 +307,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Js { input, stats, beautify_only, sourcemaps } => {
             cmd_js(&input, stats, beautify_only, sourcemaps)
         }
-        Commands::WebDyn { url, wait_ms } => cmd_webdyn(&url, wait_ms),
+        Commands::WebDyn { url, wait_ms, js, screenshot } => cmd_webdyn(&url, wait_ms, js.as_deref(), screenshot.as_deref()),
     }
 }
 
@@ -1182,7 +1188,12 @@ fn cmd_js(
     Ok(())
 }
 
-fn cmd_webdyn(url: &str, wait_ms: u64) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_webdyn(
+    url: &str,
+    wait_ms: u64,
+    js: Option<&str>,
+    screenshot: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use bitwise_core::analysis::web_dynamic::HeadlessBrowser;
 
     println!("{} {} (navegador headless)", "Renderizando:".cyan().bold(), url);
@@ -1196,6 +1207,18 @@ fn cmd_webdyn(url: &str, wait_ms: u64) -> Result<(), Box<dyn std::error::Error>>
 
     let report = browser.analyze(url, wait_ms).map_err(|e| e.to_string())?;
     print!("{}", bitwise_core::analysis::web_dynamic::format_dynamic_report(&report));
+
+    if let Some(expr) = js {
+        let result = browser.evaluate(expr).map_err(|e| e.to_string())?;
+        println!("\n{} JS> {}\n  => {}", "Evaluando:".cyan().bold(), expr, result);
+    }
+
+    if let Some(path) = screenshot {
+        let png = browser.screenshot().map_err(|e| e.to_string())?;
+        std::fs::write(path, &png)?;
+        println!("{} {} ({} bytes)", "Screenshot:".cyan().bold(), path, png.len());
+    }
+
     Ok(())
 }
 
