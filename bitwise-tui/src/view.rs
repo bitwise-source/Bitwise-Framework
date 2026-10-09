@@ -26,6 +26,7 @@ Teclas:
   /            buscar en símbolos
   r            renombrar función bajo el cursor (vista funciones)
   d            decompilar función bajo el cursor (vista funciones)
+  t            re-tipar variable bajo el cursor (vista decomp)
   q / Esc      salir
 
 Vistas:

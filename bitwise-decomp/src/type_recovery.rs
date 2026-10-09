@@ -135,6 +135,35 @@ impl TypeContext {
             .unwrap_or(8)
     }
 
+    /// Fuerza un tipo manual para un temp (re-tipeo interactivo).
+    /// Acepta un string C (`uint32_t`, `int64_t`, `void*`, `float`, ...).
+    pub fn force_type_string(&mut self, id: u64, type_str: &str) {
+        let ty = match type_str {
+            "uint8_t" => Some(VarType::Uint(1)),
+            "uint16_t" => Some(VarType::Uint(2)),
+            "uint32_t" => Some(VarType::Uint(4)),
+            "uint64_t" => Some(VarType::Uint(8)),
+            "int8_t" => Some(VarType::Int(1)),
+            "int16_t" => Some(VarType::Int(2)),
+            "int32_t" => Some(VarType::Int(4)),
+            "int64_t" => Some(VarType::Int(8)),
+            "void*" | "void *" => Some(VarType::Pointer(8)),
+            "float" => Some(VarType::Float(4)),
+            "double" => Some(VarType::Float(8)),
+            "char*" | "char *" | "string" => Some(VarType::Pointer(1)),
+            "void" => Some(VarType::Void),
+            _ => None,
+        };
+        if let Some(t) = ty {
+            self.types.insert(id, t);
+        }
+    }
+
+    /// Devuelve el tipo actual de un temp como string C (o fallback).
+    pub fn current_type_string(&self, id: u64, fallback_size: u8) -> String {
+        self.type_string_for_temp(id, fallback_size)
+    }
+
     /// Heurística: tipo de retorno = el output de la última instrucción que escribe
     /// a un registro que parezca return value (rax en x86-64).
     pub fn infer_return_type(&self, func: &IrFunction) -> String {

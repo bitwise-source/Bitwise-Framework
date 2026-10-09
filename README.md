@@ -226,9 +226,10 @@ bitwise/
 - [x] Recon de páginas web: endpoints, secrets, stack, formularios
 - [x] JS deobfuscator: beautify, renombrado, decodificación, sourcemaps
 - [x] MCP Server (8 herramientas)
-- [ ] Análisis dinámico web (navegador headless vía CDP)
-- [ ] Lifter AArch64 completo (SIMD, mul/div)
-- [ ] Decompilador interactivo completo (re-tipeo desde la TUI)
+- [x] Análisis dinámico web (navegador headless vía CDP — `bitwise webdyn`)
+- [x] Decompilador interactivo: re-tipeo de variables desde la TUI (tecla `t`)
+- [x] Lifter AArch64: mul/div, lógica (orr/eor/mvn), ldr/str, br/blr, svc
+- [ ] Análisis dinámico avanzado (ejecutar JS arbitrario y screenshots vía CDP)
 
 ## 🤝 Contribuir
 

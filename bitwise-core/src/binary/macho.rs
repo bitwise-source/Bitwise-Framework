@@ -68,10 +68,12 @@ pub fn parse_macho(data: &[u8], path: &Path) -> Result<BinaryInfo> {
         return parse_fat(data, path);
     }
 
-    let is_le = magic == MH_MAGIC || magic == MH_MAGIC_64;
+    // magic se lee como BE: en un archivo little-endian los bytes ce fa ed fe
+    // dan MH_CIGAM. CIGAM (byte-swapped) => archivo LE; MAGIC => archivo BE.
+    let is_le = magic == MH_CIGAM || magic == MH_CIGAM_64;
     let is_64 = magic == MH_MAGIC_64 || magic == MH_CIGAM_64;
 
-    if !is_le && magic != MH_CIGAM && magic != MH_CIGAM_64 {
+    if !is_le && magic != MH_MAGIC && magic != MH_MAGIC_64 {
         return Err(BitwiseError::InvalidMachO(format!(
             "magic desconocido: 0x{:08x}",
             magic
@@ -119,7 +121,7 @@ fn parse_fat(data: &[u8], path: &Path) -> Result<BinaryInfo> {
                 if offset + 28 <= data.len() {
                     let slice = &data[offset..];
                     let magic = u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]);
-                    let is_le = magic == MH_MAGIC_64 || magic == MH_MAGIC;
+                    let is_le = magic == MH_CIGAM_64 || magic == MH_CIGAM;
                     let is_64 = magic == MH_MAGIC_64 || magic == MH_CIGAM_64;
 
                     let mut info = parse_thin(slice, path, is_le, is_64)?;
@@ -142,7 +144,7 @@ fn parse_fat(data: &[u8], path: &Path) -> Result<BinaryInfo> {
     if offset + 28 <= data.len() {
         let slice = &data[offset..];
         let magic = u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]);
-        let is_le = magic == MH_MAGIC_64 || magic == MH_MAGIC;
+        let is_le = magic == MH_CIGAM_64 || magic == MH_CIGAM;
         let is_64 = magic == MH_MAGIC_64 || magic == MH_CIGAM_64;
         return parse_thin(slice, path, is_le, is_64);
     }

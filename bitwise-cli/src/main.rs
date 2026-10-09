@@ -220,6 +220,14 @@ enum Commands {
                 #[arg(short = 'm', long)]
                 sourcemaps: bool,
             },
+            /// Análisis dinámico web (navegador headless vía CDP)
+            WebDyn {
+                /// URL a renderizar con navegador real
+                url: String,
+                /// Tiempo de espera tras la carga (ms, default 3000)
+                #[arg(short = 'w', long, default_value = "3000")]
+                wait_ms: u64,
+            },
             }
 
 fn main() {
@@ -293,6 +301,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Js { input, stats, beautify_only, sourcemaps } => {
             cmd_js(&input, stats, beautify_only, sourcemaps)
         }
+        Commands::WebDyn { url, wait_ms } => cmd_webdyn(&url, wait_ms),
     }
 }
 
@@ -1170,6 +1179,23 @@ fn cmd_js(
         js_deobf::deobfuscate(&js)
     };
     print!("{}", out);
+    Ok(())
+}
+
+fn cmd_webdyn(url: &str, wait_ms: u64) -> Result<(), Box<dyn std::error::Error>> {
+    use bitwise_core::analysis::web_dynamic::HeadlessBrowser;
+
+    println!("{} {} (navegador headless)", "Renderizando:".cyan().bold(), url);
+
+    let mut browser = HeadlessBrowser::launch().map_err(|e| {
+        format!(
+            "no se pudo lanzar el navegador: {}\n  (instalá chromium: apt install chromium-browser, o google-chrome)",
+            e
+        )
+    })?;
+
+    let report = browser.analyze(url, wait_ms).map_err(|e| e.to_string())?;
+    print!("{}", bitwise_core::analysis::web_dynamic::format_dynamic_report(&report));
     Ok(())
 }
 

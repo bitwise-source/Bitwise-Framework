@@ -111,16 +111,30 @@ impl Lifter {
             "sub" => self.lift_binary(PcodeOp::IntSub, ops),
             "imul" | "mul" => self.lift_binary(PcodeOp::IntMul, ops),
             "idiv" | "div" => self.lift_binary(PcodeOp::IntDiv, ops),
+            "sdiv" => self.lift_binary(PcodeOp::IntDiv, ops),
+            "udiv" => self.lift_binary(PcodeOp::IntDivU, ops),
             "and" => self.lift_binary(PcodeOp::IntAnd, ops),
-            "or" => self.lift_binary(PcodeOp::IntOr, ops),
-            "xor" => self.lift_binary(PcodeOp::IntXor, ops),
+            "or" | "orr" => self.lift_binary(PcodeOp::IntOr, ops),
+            "xor" | "eor" => self.lift_binary(PcodeOp::IntXor, ops),
+            "mvn" => self.lift_unary(PcodeOp::IntNot, ops),
             "not" => self.lift_unary(PcodeOp::IntNot, ops),
             "neg" => self.lift_unary(PcodeOp::IntNeg, ops),
-            "shl" | "sal" => self.lift_binary(PcodeOp::IntShiftL, ops),
-            "shr" => self.lift_binary(PcodeOp::IntShiftR, ops),
-            "sar" => self.lift_binary(PcodeOp::IntShiftRA, ops),
+            "shl" | "sal" | "lsl" => self.lift_binary(PcodeOp::IntShiftL, ops),
+            "shr" | "lsr" => self.lift_binary(PcodeOp::IntShiftR, ops),
+            "sar" | "asr" => self.lift_binary(PcodeOp::IntShiftRA, ops),
+            "ldr" => self.lift_arm64_ldr(ops),
+            "str" => self.lift_arm64_str(ops),
+            "ldrb" => self.lift_arm64_ldr_size(ops, 1),
+            "strb" => self.lift_arm64_str_size(ops, 1),
+            "ldrh" => self.lift_arm64_ldr_size(ops, 2),
+            "strh" => self.lift_arm64_str_size(ops, 2),
+            "ldrsb" => self.lift_arm64_ldr_size(ops, 1),
+            "ldrsw" => self.lift_arm64_ldr_size(ops, 4),
+            "br" => self.lift_arm64_br(ops),
+            "blr" => self.lift_arm64_blr(ops),
+            "svc" => self.lift_arm64_svc(),
             "cmp" => self.lift_cmp(ops),
-            "test" => self.lift_test(ops),
+            "test" | "tst" => self.lift_test(ops),
             "lea" => self.lift_lea(ops),
             "call" => self.lift_call(ops),
             "jmp" | "jmpq" => self.lift_jmp(ops),
@@ -454,6 +468,63 @@ impl Lifter {
             let nzcv = self.regs.get("nzcv").unwrap_or(Varnode::temp(9999, 4));
             self.emit(PcodeOp::BranchCond, None, vec![nzcv, target]);
         }
+    }
+
+    /// ldr xN, [addr] — load de 8 bytes (default)
+    fn lift_arm64_ldr(&mut self, ops: &str) {
+        self.lift_arm64_ldr_size(ops, 8);
+    }
+
+    /// ldr (con tamaño): load de size bytes
+    fn lift_arm64_ldr_size(&mut self, ops: &str, size: u8) {
+        let parts: Vec<&str> = ops.split(',').map(|s| s.trim()).collect();
+        if parts.len() < 2 { return; }
+        let Some(dst) = self.parse_operand(parts[0]) else { return; };
+        // el operando de memoria es todo lo que sigue a la primera coma
+        let addr = self.parse_operand(&parts[1..].join(","));
+        if let Some(addr) = addr {
+            let t = self.new_temp(size);
+            self.emit(PcodeOp::Load, Some(t.clone()), vec![Varnode::mem(addr, 0, size)]);
+            self.emit(PcodeOp::Copy, Some(dst), vec![t]);
+        }
+    }
+
+    /// str xN, [addr] — store de 8 bytes (default)
+    fn lift_arm64_str(&mut self, ops: &str) {
+        self.lift_arm64_str_size(ops, 8);
+    }
+
+    /// str (con tamaño): store de size bytes
+    fn lift_arm64_str_size(&mut self, ops: &str, size: u8) {
+        let parts: Vec<&str> = ops.split(',').map(|s| s.trim()).collect();
+        if parts.len() < 2 { return; }
+        let Some(src) = self.parse_operand(parts[0]) else { return; };
+        let addr = self.parse_operand(&parts[1..].join(","));
+        if let Some(addr) = addr {
+            self.emit(PcodeOp::Store, None, vec![Varnode::mem(addr, 0, size), src]);
+        }
+    }
+
+    /// br xN — branch indirecto (jump a registro)
+    fn lift_arm64_br(&mut self, ops: &str) {
+        if let Some(target) = self.parse_operand(ops.trim()) {
+            self.emit(PcodeOp::Branch, None, vec![target]);
+        }
+    }
+
+    /// blr xN — branch-and-link indirecto (call a registro)
+    fn lift_arm64_blr(&mut self, ops: &str) {
+        if let Some(target) = self.parse_operand(ops.trim()) {
+            // x30 (lr) = return addr; luego jump al target
+            let lr = self.regs.get("x30").unwrap_or(Varnode::reg("lr", 8));
+            self.emit(PcodeOp::Copy, Some(lr), vec![Varnode::const_(self.current_addr + 4, 8)]);
+            self.emit(PcodeOp::Branch, None, vec![target]);
+        }
+    }
+
+    /// svc — syscall: detener la emulación/lifting (límite del análisis)
+    fn lift_arm64_svc(&mut self) {
+        self.emit(PcodeOp::Unimplemented("svc".into()), None, vec![]);
     }
 
     /// Construye bloques básicos IR desde instrucciones P-Code.

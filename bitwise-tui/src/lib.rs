@@ -40,6 +40,10 @@ pub struct TuiSession {
     pub bin_path: std::path::PathBuf,
     /// Última decompilación mostrada (vista decomp)
     pub last_decomp: String,
+    /// Dirección de la función decompilada actualmente
+    pub current_func_addr: Option<u64>,
+    /// Instrucciones de la función actual (para re-decompilar con re-tipeo)
+    pub current_func_insns: Vec<bitwise_core::arch::Instruction>,
 }
 
 impl TuiSession {
@@ -72,6 +76,8 @@ impl TuiSession {
             project,
             bin_path: path.to_path_buf(),
             last_decomp: String::new(),
+            current_func_addr: None,
+            current_func_insns: Vec::new(),
         })
     }
 
@@ -230,8 +236,24 @@ impl TuiSession {
             return false;
         }
 
+        self.current_func_addr = Some(addr);
+        self.current_func_insns = func_insns.clone();
+        self.render_current_decomp();
+        self.mode = ViewMode::Decomp;
+        self.cursor = 0;
+        self.scroll = 0;
+        true
+    }
+
+    /// Re-decompila la función actual aplicando los overrides de tipo del
+    /// proyecto (project.types).
+    fn render_current_decomp(&mut self) {
+        let Some(addr) = self.current_func_addr else {
+            return;
+        };
+
         let mut lifter = bitwise_lift::Lifter::new(bitwise_lift::RegisterMap::x86_64());
-        let raw = lifter.lift_all(&func_insns);
+        let raw = lifter.lift_all(&self.current_func_insns);
         let pcode = bitwise_decomp::optimize(&raw);
         let blocks = bitwise_lift::Lifter::build_blocks(&pcode);
 
@@ -244,11 +266,60 @@ impl TuiSession {
         let mut ir_func = bitwise_ir::IrFunction::new(&name, addr);
         ir_func.blocks = blocks;
 
+        // convertir project.types (temp id → tipo string) a overrides
+        let overrides: Vec<(u64, String)> = self
+            .project
+            .types
+            .iter()
+            .filter_map(|(k, v)| {
+                let id = k.strip_prefix('t')?.parse::<u64>().ok()?;
+                Some((id, v.clone()))
+            })
+            .collect();
+
         let mut decompiler = bitwise_decomp::Decompiler::new();
-        self.last_decomp = decompiler.decompile(&ir_func);
-        self.mode = ViewMode::Decomp;
-        self.cursor = 0;
-        self.scroll = 0;
+        self.last_decomp = decompiler.decompile_with_overrides(&ir_func, &overrides);
+    }
+
+    /// Extrae el temp id de la línea del cursor en la vista Decomp.
+    /// Busca el patrón `// tNNNN` al final de una declaración.
+    fn temp_id_at_cursor(&self) -> Option<u64> {
+        let line = self.last_decomp.lines().nth(self.cursor)?;
+        // patrón: "// t1234"
+        let idx = line.find("// t")?;
+        let rest = &line[idx + 4..]; // después de "// t"
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse::<u64>().ok()
+    }
+
+    /// Cicla el tipo de la variable bajo el cursor y re-decompila.
+    pub fn retype_current(&mut self) -> bool {
+        if self.mode != ViewMode::Decomp {
+            self.status = "t solo funciona en la vista decomp (tecla 6)".into();
+            return false;
+        }
+        let Some(id) = self.temp_id_at_cursor() else {
+            self.status = "coloca el cursor en una declaración (línea '// tNNNN')".into();
+            return false;
+        };
+
+        const TYPES: &[&str] = &[
+            "uint64_t", "uint32_t", "uint16_t", "uint8_t",
+            "int64_t", "int32_t", "int16_t", "int8_t",
+            "void*", "char*", "float", "double",
+        ];
+        let current = self
+            .project
+            .forced_type(id)
+            .unwrap_or("uint64_t");
+        let idx = TYPES.iter().position(|&t| t == current).unwrap_or(0);
+        let next = TYPES[(idx + 1) % TYPES.len()];
+        self.project.set_type(id, next);
+
+        // guardar y re-renderizar
+        let _ = self.project.save_for(&self.bin_path);
+        self.render_current_decomp();
+        self.status = format!("t{} → {}", id, next);
         true
     }
 }
@@ -336,6 +407,9 @@ pub fn run(session: &mut TuiSession) -> io::Result<()> {
                     }
                     KeyCode::Char('d') => {
                         session.decompile_current_function();
+                    }
+                    KeyCode::Char('t') => {
+                        session.retype_current();
                     }
                     KeyCode::Char('/') => {
                         // búsqueda simple: leer línea desde stdin crudo es complejo;

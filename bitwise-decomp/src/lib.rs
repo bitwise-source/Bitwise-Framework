@@ -99,10 +99,25 @@ impl Decompiler {
     }
 
     pub fn decompile(&mut self, func: &IrFunction) -> String {
+        self.decompile_with_overrides(func, &[])
+    }
+
+    /// Decompila aplicando overrides de tipo manuales:
+    /// `(temp_id, "uint32_t")` etc. — para el re-tipeo interactivo.
+    pub fn decompile_with_overrides(
+        &mut self,
+        func: &IrFunction,
+        overrides: &[(u64, String)],
+    ) -> String {
         self.output.clear();
         self.vars = VarTracker::default();
         self.types = TypeContext::new();
         self.types.infer_from_ir(func);
+
+        // aplicar overrides manuales
+        for (id, ty) in overrides {
+            self.types.force_type_string(*id, ty);
+        }
 
         // Cabecera
         self.emit_line(&format!(
